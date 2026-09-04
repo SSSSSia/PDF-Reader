@@ -1,0 +1,22 @@
+node_modules/
+dist/
+src-tauri/target/
+# 打包产物：sidecar 后端 exe 由 PyInstaller 生成，体积大且机器相关，不入库
+src-tauri/sidecar/
+build/
+*.pdb
+*.ilk
+.env
+.env.local
+.env.*.local
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.venv_*/
+# 用户个人配置与缓存（含 OCR/翻译 API Key），绝不入库
+config/config.json
+cache/
+.DS_Store
+*.log

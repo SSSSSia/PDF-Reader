@@ -1,0 +1,15 @@
+[project]
+name = "pdf-bilingual-reader"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "httpx>=0.25.0",
+    "pydantic>=2.0.0",
+    "python-multipart>=0.0.6",
+    "aiofiles>=23.0.0",
+]
+
+[tool.uv]
+index = ["https://pypi.tuna.tsinghua.edu.cn/simple"]

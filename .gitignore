@@ -20,3 +20,7 @@ config/config.json
 cache/
 .DS_Store
 *.log
+# TypeScript 增量构建产物
+*.tsbuildinfo
+# 本地项目记忆（个人/会话级，非源码）
+.workbuddy/

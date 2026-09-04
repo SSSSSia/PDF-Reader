@@ -4,6 +4,7 @@ import { useScrollSync } from "../hooks/useScrollSync";
 import { useUiStore } from "../stores/uiStore";
 import LoadingSpinner from "./common/LoadingSpinner";
 import PdfViewer from "./PdfViewer";
+import ExportBar from "./ExportBar";
 
 export default function BilingualPage() {
   const { pages, currentPage, isLoading } = usePdfStore();
@@ -55,7 +56,10 @@ export default function BilingualPage() {
             紧跟模式
           </button>
         </div>
-        <PdfViewer />
+        <div className="flex items-center gap-3">
+          <ExportBar />
+          <PdfViewer />
+        </div>
       </div>
 
       {mode === "bilingual" ? (
@@ -65,13 +69,13 @@ export default function BilingualPage() {
             className="space-y-3 pr-2 overflow-y-auto"
             onScroll={() => handleScroll("left")}
           >
-            <h3 className="text-sm font-semibold text-gray-600 sticky top-0 bg-white py-1 z-10">
+            <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 sticky top-0 bg-white dark:bg-gray-900 py-1 z-10">
               原文
             </h3>
             {page.blocks.map((block) => (
               <div
                 key={block.block_id}
-                className="p-3 bg-white rounded border text-base leading-relaxed"
+                className="p-3 bg-white dark:bg-gray-800 dark:text-gray-100 rounded border dark:border-gray-700 text-base leading-relaxed"
                 style={{
                   minHeight: `${Math.max(50, block.original.length * 0.8)}px`,
                 }}
@@ -85,13 +89,13 @@ export default function BilingualPage() {
             className="space-y-3 pl-2 overflow-y-auto"
             onScroll={() => handleScroll("right")}
           >
-            <h3 className="text-sm font-semibold text-gray-600 sticky top-0 bg-white py-1 z-10">
+            <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 sticky top-0 bg-white dark:bg-gray-900 py-1 z-10">
               译文
             </h3>
             {page.blocks.map((block) => (
               <div
                 key={block.block_id}
-                className="p-3 bg-white rounded border text-base leading-relaxed text-blue-700"
+                className="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 text-base leading-relaxed text-blue-700 dark:text-blue-300"
                 style={{
                   minHeight: `${Math.max(50, block.translated.length * 0.8)}px`,
                 }}
@@ -104,11 +108,11 @@ export default function BilingualPage() {
       ) : (
         <div className="space-y-4 overflow-y-auto h-[calc(100vh-180px)]">
           {page.blocks.map((block) => (
-            <div key={block.block_id} className="bg-white rounded-lg shadow p-4">
-              <div className="text-base leading-relaxed mb-3">
+            <div key={block.block_id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+              <div className="text-base leading-relaxed mb-3 dark:text-gray-100">
                 {block.original}
               </div>
-              <div className="text-base leading-relaxed text-blue-700 border-l-4 border-blue-400 pl-4">
+              <div className="text-base leading-relaxed text-blue-700 dark:text-blue-300 border-l-4 border-blue-400 pl-4">
                 {block.translated || "待翻译..."}
               </div>
             </div>

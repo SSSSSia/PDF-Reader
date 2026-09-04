@@ -150,3 +150,15 @@ pub async fn check_file_exists(_state: State<'_, AppState>, file_path: String) -
 pub async fn get_cache_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state.cache_dir.to_string_lossy().to_string())
 }
+
+/// 将导出的双语内容写入用户所选路径（Markdown / 纯文本）。
+/// 由前端用 dialog save 选择路径后调用，避免前端直接写文件权限问题。
+#[tauri::command]
+pub async fn export_content(
+    _state: State<'_, AppState>,
+    path: String,
+    content: String,
+) -> Result<(), String> {
+    fs::write(&path, content).map_err(|e| e.to_string())?;
+    Ok(())
+}

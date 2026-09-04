@@ -36,6 +36,7 @@ fn main() {
             commands::get_pipeline_status,
             commands::check_file_exists,
             commands::get_cache_dir,
+            commands::export_content,
         ])
         .setup(|app| {
             // ── 内嵌 FastAPI sidecar（决策 D1）──────────────────────────

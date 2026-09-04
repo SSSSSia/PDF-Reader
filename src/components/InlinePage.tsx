@@ -2,6 +2,7 @@ import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
 import LoadingSpinner from "./common/LoadingSpinner";
 import PdfViewer from "./PdfViewer";
+import ExportBar from "./ExportBar";
 
 export default function InlinePage() {
   const { pages, currentPage, isLoading } = usePdfStore();
@@ -50,16 +51,19 @@ export default function InlinePage() {
             紧跟模式
           </button>
         </div>
-        <PdfViewer />
+        <div className="flex items-center gap-3">
+          <ExportBar />
+          <PdfViewer />
+        </div>
       </div>
 
       <div className="space-y-4 overflow-y-auto h-[calc(100vh-180px)]">
         {page.blocks.map((block) => (
-          <div key={block.block_id} className="bg-white rounded-lg shadow p-4">
-            <div className="text-base leading-relaxed font-medium">
+          <div key={block.block_id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+            <div className="text-base leading-relaxed font-medium dark:text-gray-100">
               {block.original}
             </div>
-            <div className="mt-2 text-base leading-relaxed text-blue-700 border-l-4 border-blue-400 pl-4">
+            <div className="mt-2 text-base leading-relaxed text-blue-700 dark:text-blue-300 border-l-4 border-blue-400 pl-4">
               {block.translated || "待翻译..."}
             </div>
           </div>

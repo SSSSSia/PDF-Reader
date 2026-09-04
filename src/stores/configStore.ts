@@ -27,6 +27,18 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       throw e;
     }
   },
+
+  setTheme: async (theme: "light" | "dark") => {
+    const cur = get().config;
+    if (!cur) return;
+    const updated: AppConfig = { ...cur, ui: { ...cur.ui, theme } };
+    try {
+      await invoke("save_config", { config_str: JSON.stringify(updated) });
+      set({ config: updated });
+    } catch (e) {
+      console.error("Failed to save theme:", e);
+    }
+  },
 }));
 
 interface ConfigState {
@@ -34,4 +46,5 @@ interface ConfigState {
   isConfigured: boolean;
   loadConfig: () => Promise<void>;
   saveConfig: (config: AppConfig) => Promise<void>;
+  setTheme: (theme: "light" | "dark") => Promise<void>;
 }

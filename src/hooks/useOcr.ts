@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { usePdfStore } from "../stores/pdfStore";
-import { invoke } from "@tauri-apps/api/core";
+import { runPipeline, getPipelineStatus } from "../lib/bridge";
 import { PipelineResult } from "../types";
 
 const POLL_INTERVAL_MS = 1000;
@@ -26,9 +26,7 @@ export function useOcr() {
         setProgress(0);
         setError(null);
 
-        const startStr = (await invoke("run_pipeline", {
-          file_path: filePath,
-        })) as string;
+        const startStr = (await runPipeline(filePath)) as string;
         const start = JSON.parse(startStr) as PipelineResult;
 
         if (start.status === "failed") {
@@ -42,9 +40,9 @@ export function useOcr() {
 
         const deadline = Date.now() + MAX_WAIT_MS;
         while (Date.now() < deadline) {
-          const statusStr = (await invoke("get_pipeline_status", {
-            job_id: start.job_id,
-          })) as string;
+          const statusStr = (await getPipelineStatus(
+            start.job_id,
+          )) as string;
           const status = JSON.parse(statusStr) as PipelineResult;
 
           setProgress(status.progress ?? 0);

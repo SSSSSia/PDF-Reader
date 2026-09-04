@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import * as pdfjsLib from "pdfjs-dist";
+import { convertFileSrc } from "../lib/bridge";
 // Vite 会把 worker 作为本地资源打包，避免依赖 CDN（满足「仅本地使用」约束）
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { usePdfStore } from "../stores/pdfStore";
@@ -50,9 +50,8 @@ export function usePdfThumbnails() {
       setNumPages(0);
 
       try {
-        const src = (window as any).__TAURI__
-          ? convertFileSrc(filePath)
-          : filePath;
+        // 桥接层根据运行环境返回可用 URL：Tauri 用 convertFileSrc，浏览器用后端原始文件接口
+        const src = convertFileSrc(filePath);
         // pdfjs v4 的 getDocument 类型对纯 string 较严格，这里用 any 规避类型噪声
         const task = pdfjsLib.getDocument(src as any);
         const pdf: any = await task.promise;

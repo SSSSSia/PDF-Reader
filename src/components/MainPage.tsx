@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { open } from "@tauri-apps/plugin-dialog";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
 import { useOcr } from "../hooks/useOcr";
+import { openFileDialog, uploadFile, isTauri } from "../lib/bridge";
 import LoadingSpinner from "./common/LoadingSpinner";
 
 export default function MainPage() {
@@ -64,12 +64,20 @@ export default function MainPage() {
   };
 
   const handleBrowse = async () => {
-    const selected = await open({
-      title: "选择 PDF 文件",
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
-    });
+    const selected = await openFileDialog();
     if (!selected) return;
     await handlePath(selected);
+  };
+
+  // 浏览器模式下 HTML5 拖拽（Tauri 模式走 webview 的 onDragDropEvent，这里跳过）
+  const handleDrop = async (e: React.DragEvent) => {
+    if (isTauri()) return;
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf")) return;
+    const path = await uploadFile(file);
+    if (path) await handlePath(path);
   };
 
   return (
@@ -82,6 +90,7 @@ export default function MainPage() {
         }`}
         onClick={handleBrowse}
         onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
       >
         <div className="text-6xl mb-4">📄</div>
         <h2 className="text-xl font-semibold mb-2 dark:text-gray-100">

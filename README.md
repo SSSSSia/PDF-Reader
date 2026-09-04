@@ -74,6 +74,33 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-start.ps1
 
 开发态下 Rust 端**不会**拉起内嵌 sidecar，而是沿用脚本启动的外部 FastAPI（避免争用 8000 端口）。
 
+> ⚠️ 无论哪种开发态，只要走 Tauri 窗口（`npm run tauri dev`）就**需要编译 Rust 壳**，即本机必须装有「C++ 生成工具 + Windows 10/11 SDK」，并在 **VS Developer PowerShell** 中运行（否则 `link.exe` 会被 Git Bash 的 GNU `link` 劫持而链接失败）。
+
+---
+
+## 纯浏览器开发模式（免 Rust 编译，便于人工测试）
+
+如果你的机器**暂时无法编译 Rust**（缺 Windows SDK 等），可以用纯浏览器模式手动测试完整 UI 与后端交互，无需 `tauri dev`：
+
+```powershell
+# 终端 A：起 Python 后端（监听 127.0.0.1:8000）
+cd backend
+python -m venv .venv && .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python main.py
+
+# 终端 B：起前端（Vite，默认 http://localhost:5173）
+npm run dev
+```
+
+然后在浏览器打开 `http://localhost:5173` 即可。前端已内置**双模桥接**（`src/lib/bridge.ts`）：检测到非 Tauri 环境时，会自动把原本走 Tauri IPC 的调用改走本地后端 HTTP 接口——
+
+- 选 / 拖入 PDF → 经 `/api/upload` 上传到后端并拿到服务端路径 → 走 `/api/pipeline/run` + 轮询 `/api/pipeline/status`；
+- 设置页读写 Key → 走 `/api/config`（GET/POST）；
+- 缩略图 → 经 `/api/file/raw` 读取 PDF 字节。
+
+> 注意：此模式仅在**本地**连 `localhost:8000`，不触碰任何第三方 API，也不在前端硬编码 Key，符合项目的「Key 只在本地后端」原则。导出功能在浏览器下走 Blob 下载（无 Rust 写文件权限）。生产环境（打包 exe）仍走 Tauri 原生路径，互不影响。
+
 ---
 
 ## 配置 API Key
@@ -183,8 +210,9 @@ PDF-Reader/
 | 版本 | 阶段 | 内容 |
 |------|------|------|
 | `v0.1.0`（已发布） | Phase 0 + 部分 Phase 1 | 主链路打通、OCR 重写、缓存、配置热更新、缩略图 |
-| `v0.2.0`（已规划） | Phase 2 | provider 抽象、暗色模式、拖拽上传、导出双语 |
-| `v0.3.0`（进行中） | Phase 3 | 测试 + CI、LICENSE、配置模板、README 复刻指南、构建串联 |
+| `v0.2.0`（已发布） | Phase 2 | provider 抽象、暗色模式、拖拽上传、导出双语 |
+| `v0.3.0`（已完成，待打 tag） | Phase 3 | 测试 + CI、LICENSE、配置模板、README 复刻指南、构建串联 |
+| —（dev 工具） | 双模桥接 | `src/lib/bridge.ts`：纯浏览器模式手动测试，免 Rust 编译 |
 
 详细开发约束与接口契约见 [`docs/开发总纲.md`](docs/开发总纲.md)；版本 / 发版节奏见 [`docs/版本规划.md`](docs/版本规划.md)。
 

@@ -68,7 +68,7 @@ pub async fn load_config(state: State<'_, AppState>) -> Result<String, String> {
                 provider: "siliconflow".to_string(),
                 api_key: "".to_string(),
                 api_url: "https://api.siliconflow.cn/v1".to_string(),
-                model: "Qwen2.5-7B-Instruct".to_string(),
+                model: "Qwen/Qwen2.5-7B-Instruct".to_string(),
                 target_language: "en".to_string(),
                 source_language: "zh".to_string(),
             },

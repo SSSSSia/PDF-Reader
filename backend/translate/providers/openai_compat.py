@@ -19,7 +19,7 @@ class OpenAICompatProvider(BaseTranslator):
     ) -> str:
         api_key = config.get("api_key", "")
         api_url = config.get("api_url", "https://api.siliconflow.cn/v1")
-        model = config.get("model", "Qwen2.5-7B-Instruct")
+        model = config.get("model", "Qwen/Qwen2.5-7B-Instruct")
 
         if not api_key:
             return ""

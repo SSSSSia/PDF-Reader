@@ -98,7 +98,7 @@ powershell -ExecutionPolicy Bypass -File scripts/dev-start.ps1
     "provider": "siliconflow",
     "api_key": "<你的 SiliconFlow Key>",
     "api_url": "https://api.siliconflow.cn/v1",
-    "model": "Qwen2.5-7B-Instruct",
+    "model": "Qwen/Qwen2.5-7B-Instruct",
     "target_language": "en",
     "source_language": "zh"
   },

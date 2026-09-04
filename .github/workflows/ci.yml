@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, master]
+  pull_request:
+
+jobs:
+  frontend:
+    name: 前端 (tsc + vite build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -b
+      - run: npx vite build
+
+  backend:
+    name: 后端 (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装依赖
+        run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+      - name: 运行测试
+        working-directory: backend
+        run: pytest -q
+
+  # 说明：Rust / Tauri 桌面端构建需要 Windows 10/11 SDK（MSVC 链接器），
+  # 在 GitHub 免费 runner 上当前未配置，故本地验证（见 README「打包发布」一节）。
+  # 后续如需在 CI 中校验 tauri build，可新增 windows-latest job 并安装对应 SDK。

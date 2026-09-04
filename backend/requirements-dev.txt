@@ -1,0 +1,5 @@
+# 开发/测试依赖（CI 与本地验证用）
+pytest>=7.0
+httpx>=0.25.0
+pymupdf>=1.24.0
+PyInstaller>=6.0

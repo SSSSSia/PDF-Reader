@@ -28,6 +28,10 @@ class Settings:
         self._load()
 
     def _resolve_config_path(self) -> str:
+        # 允许通过环境变量覆盖配置文件路径（便于测试与自定义部署）
+        env_path = os.environ.get("PDF_READER_CONFIG")
+        if env_path:
+            return os.path.abspath(env_path)
         if platform.system() == "Windows":
             app_data = os.environ.get("APPDATA")
             if app_data:

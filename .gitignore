@@ -22,5 +22,7 @@ cache/
 *.log
 # TypeScript 增量构建产物
 *.tsbuildinfo
+# pytest 缓存
+.pytest_cache/
 # 本地项目记忆（个人/会话级，非源码）
 .workbuddy/

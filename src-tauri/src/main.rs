@@ -39,7 +39,7 @@ fn main() {
             commands::get_cache_dir,
             commands::export_content,
         ])
-        .setup(|app| {
+        .setup(|_app| {
             // ── 内嵌 FastAPI sidecar（决策 D1）──────────────────────────
             // release：打包了 pdf-backend.exe，由 Tauri 拉起本地 8000 端口。
             // dev    ：不拉起，沿用 scripts/dev-start.ps1 单独启动的后端，
@@ -49,7 +49,7 @@ fn main() {
                 use tauri_plugin_shell::ShellExt;
                 use tauri_plugin_shell::process::CommandEvent;
 
-                let handle = app.handle().clone();
+                let handle = _app.handle().clone();
                 let sidecar = handle
                     .shell()
                     .sidecar("pdf-backend")

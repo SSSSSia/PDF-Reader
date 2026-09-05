@@ -66,7 +66,7 @@ class Settings:
             "provider": "siliconflow",
             "api_key": "",
             "api_url": "https://api.siliconflow.cn/v1",
-            "model": "Qwen/Qwen2.5-7B-Instruct",
+            "model": "deepseek-ai/DeepSeek-V4-Flash",
             "target_language": "en",
             "source_language": "zh",
         }

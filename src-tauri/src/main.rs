@@ -38,6 +38,7 @@ fn main() {
             commands::check_file_exists,
             commands::get_cache_dir,
             commands::export_content,
+            commands::test_api_connection,
         ])
         .setup(|_app| {
             // ── 内嵌 FastAPI sidecar（决策 D1）──────────────────────────

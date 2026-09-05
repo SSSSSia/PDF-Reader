@@ -14,40 +14,50 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 dark:text-gray-100">
-      <nav className="bg-white dark:bg-gray-800 shadow-sm border-b dark:border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
-          <Link
-            to="/"
-            className="text-xl font-bold text-blue-600 dark:text-blue-400"
-          >
-            PDF双语阅读器
+    <div className="min-h-screen">
+      <nav className="sticky top-0 z-30 border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-4">
+          <Link to="/" className="flex items-center gap-2.5">
+            <span
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-blue-600 text-sm font-bold text-white"
+              aria-hidden="true"
+            >
+              译
+            </span>
+            <span className="text-base font-semibold text-slate-900 dark:text-slate-100">
+              PDF双语阅读器
+            </span>
           </Link>
-          <div className="flex gap-4 items-center">
+          <div className="flex items-center gap-1">
             <button
               onClick={handleToggle}
               title={theme === "dark" ? "切换到亮色" : "切换到暗色"}
-              className="px-2 py-1 rounded text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+              aria-label={theme === "dark" ? "切换到亮色" : "切换到暗色"}
+              className="rounded-md px-2 py-1.5 text-base leading-none text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
             >
               {theme === "dark" ? "🌞" : "🌙"}
             </button>
             <Link
               to="/config"
-              className={`px-3 py-1 rounded text-sm ${
+              aria-current={location.pathname === "/config" ? "page" : undefined}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
                 location.pathname === "/config"
-                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-200"
-                  : "text-gray-600 hover:text-blue-600 dark:text-gray-300 dark:hover:text-blue-400"
+                  ? "bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-100"
+                  : "text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               }`}
             >
               设置
             </Link>
             {!isConfigured && (
-              <span className="text-orange-500 text-sm">⚠️ 请先配置API Key</span>
+              <span className="ml-2 hidden items-center gap-1.5 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 sm:flex">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+                请先配置 API Key
+              </span>
             )}
           </div>
         </div>
       </nav>
-      <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-5">{children}</main>
     </div>
   );
 }

@@ -1,14 +1,14 @@
+import { Link } from "react-router-dom";
 import { useRef } from "react";
 import { usePdfStore } from "../stores/pdfStore";
 import { useScrollSync } from "../hooks/useScrollSync";
 import { useUiStore } from "../stores/uiStore";
 import LoadingSpinner from "./common/LoadingSpinner";
-import PdfViewer from "./PdfViewer";
-import ExportBar from "./ExportBar";
+import MarkdownText from "./common/MarkdownText";
+import ReaderToolbar from "./ReaderToolbar";
 
 export default function BilingualPage() {
   const { pages, currentPage, isLoading } = usePdfStore();
-  const { mode, setMode } = useUiStore();
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
   const { handleScroll } = useScrollSync(leftRef, rightRef);
@@ -19,106 +19,76 @@ export default function BilingualPage() {
   if (isLoading) return <LoadingSpinner text="加载中..." />;
   if (!page) {
     return (
-      <div className="text-center py-20">
-        <p className="text-gray-500 text-lg">请先上传 PDF 并完成识别</p>
-        <a
-          href="/"
-          className="mt-4 inline-block px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+      <div className="py-20 text-center">
+        <div
+          className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100 text-2xl dark:bg-slate-800"
+          aria-hidden="true"
         >
+          📄
+        </div>
+        <p className="mb-4 text-slate-600 dark:text-slate-300">
+          请先上传 PDF 并完成识别
+        </p>
+        <Link to="/" className="btn-primary">
           返回首页
-        </a>
+        </Link>
       </div>
     );
   }
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setMode("bilingual")}
-            className={`px-4 py-1 rounded text-sm ${
-              mode === "bilingual"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-200 text-gray-700"
-            }`}
-          >
-            左右对照
-          </button>
-          <button
-            onClick={() => setMode("inline")}
-            className={`px-4 py-1 rounded text-sm ${
-              mode === "inline"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-200 text-gray-700"
-            }`}
-          >
-            紧跟模式
-          </button>
-        </div>
-        <div className="flex items-center gap-3">
-          <ExportBar />
-          <PdfViewer />
-        </div>
-      </div>
+      <ReaderToolbar />
 
-      {mode === "bilingual" ? (
-        <div className="grid grid-cols-2 gap-4 gap-x-6 h-[calc(100vh-180px)] overflow-auto">
-          <div
-            ref={leftRef}
-            className="space-y-3 pr-2 overflow-y-auto"
-            onScroll={() => handleScroll("left")}
-          >
-            <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 sticky top-0 bg-white dark:bg-gray-900 py-1 z-10">
-              原文
-            </h3>
-            {page.blocks.map((block) => (
-              <div
-                key={block.block_id}
-                className="p-3 bg-white dark:bg-gray-800 dark:text-gray-100 rounded border dark:border-gray-700 text-base leading-relaxed"
-                style={{
-                  minHeight: `${Math.max(50, block.original.length * 0.8)}px`,
-                }}
-              >
-                {block.original}
-              </div>
-            ))}
-          </div>
-          <div
-            ref={rightRef}
-            className="space-y-3 pl-2 overflow-y-auto"
-            onScroll={() => handleScroll("right")}
-          >
-            <h3 className="text-sm font-semibold text-gray-600 dark:text-gray-300 sticky top-0 bg-white dark:bg-gray-900 py-1 z-10">
-              译文
-            </h3>
-            {page.blocks.map((block) => (
-              <div
-                key={block.block_id}
-                className="p-3 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 text-base leading-relaxed text-blue-700 dark:text-blue-300"
-                style={{
-                  minHeight: `${Math.max(50, block.translated.length * 0.8)}px`,
-                }}
-              >
-                {block.translated || "待翻译..."}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-4 overflow-y-auto h-[calc(100vh-180px)]">
+      {/* <md 单栏堆叠（浏览器窄窗口）；md+ 双栏对照（Tauri 最小窗宽 900px 恒为双栏） */}
+      <div className="grid h-[calc(100vh-170px)] grid-cols-1 gap-x-6 gap-y-4 overflow-auto md:grid-cols-2">
+        <div
+          ref={leftRef}
+          className="space-y-3 overflow-y-auto pr-2"
+          onScroll={() => handleScroll("left")}
+        >
+          <h3 className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-500">
+            原文
+          </h3>
           {page.blocks.map((block) => (
-            <div key={block.block_id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-              <div className="text-base leading-relaxed mb-3 dark:text-gray-100">
-                {block.original}
-              </div>
-              <div className="text-base leading-relaxed text-blue-700 dark:text-blue-300 border-l-4 border-blue-400 pl-4">
-                {block.translated || "待翻译..."}
-              </div>
+            <div
+              key={block.block_id}
+              className="rounded-lg border border-slate-200 bg-white p-3.5 transition-colors duration-150 dark:border-slate-700 dark:bg-slate-800"
+              style={{
+                minHeight: `${Math.max(50, block.original.length * 0.8)}px`,
+              }}
+            >
+              <MarkdownText text={block.original} />
             </div>
           ))}
         </div>
-      )}
+        <div
+          ref={rightRef}
+          className="space-y-3 overflow-y-auto pl-2"
+          onScroll={() => handleScroll("right")}
+        >
+          <h3 className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 py-2 text-xs font-semibold uppercase tracking-wide text-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-blue-400">
+            译文
+          </h3>
+          {page.blocks.map((block) => (
+            <div
+              key={block.block_id}
+              className="rounded-lg border border-blue-100 bg-white p-3.5 text-blue-900 transition-colors duration-150 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-100"
+              style={{
+                minHeight: `${Math.max(50, block.translated.length * 0.8)}px`,
+              }}
+            >
+              {block.translated ? (
+                <MarkdownText text={block.translated} />
+              ) : (
+                <span className="italic text-slate-400 dark:text-slate-500">
+                  待翻译...
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

@@ -83,38 +83,59 @@ export default function MainPage() {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh]">
       <div
-        className={`w-full max-w-lg border-2 rounded-xl p-12 text-center transition-all cursor-pointer ${
-          isDragging
-            ? "border-blue-500 bg-blue-50 dark:bg-blue-900/30"
-            : "border-dashed border-gray-300 hover:border-blue-400 hover:bg-gray-50 dark:hover:bg-gray-800 dark:border-gray-600"
-        }`}
+        role="button"
+        tabIndex={0}
+        aria-label="选择或拖入 PDF 文件"
         onClick={handleBrowse}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleBrowse();
+          }
+        }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={handleDrop}
+        className={`w-full max-w-lg rounded-xl border-2 p-6 text-center transition-colors duration-150 cursor-pointer sm:p-10 ${
+          isDragging
+            ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+            : "border-dashed border-slate-300 hover:border-blue-400 hover:bg-white dark:border-slate-600 dark:hover:border-blue-500 dark:hover:bg-slate-800"
+        }`}
       >
-        <div className="text-6xl mb-4">📄</div>
-        <h2 className="text-xl font-semibold mb-2 dark:text-gray-100">
+        <div className="mb-3 text-5xl" aria-hidden="true">
+          {isDragging ? "📂" : "📄"}
+        </div>
+        <h2 className="mb-1.5 text-lg font-semibold text-slate-900 dark:text-slate-100">
           {isDragging ? "松开以加载 PDF" : "点击选择或拖入 PDF 文件"}
         </h2>
-        <p className="text-gray-500 dark:text-gray-400 text-sm">
-          支持 PDF 格式，点击浏览或拖拽到此处
+        <p className="text-sm text-slate-500 dark:text-slate-400">
+          识别与翻译完成后自动进入双语阅读
         </p>
       </div>
 
       {file && (
-        <div className="mt-4 p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
-          <p className="text-sm dark:text-gray-200">
-            已选择: <span className="font-medium">{file.name}</span>
+        <div className="card mt-4 w-full max-w-lg px-4 py-3 animate-fade-in">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            已选择:{" "}
+            <span className="font-medium text-slate-800 dark:text-slate-200">
+              {file.name}
+            </span>
           </p>
         </div>
       )}
 
       {isLoading && (
-        <div className="w-full max-w-lg mt-4">
+        <div className="mt-4 w-full max-w-lg animate-fade-in">
           <LoadingSpinner text={`正在识别与翻译… ${Math.round(progress)}%`} />
-          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+          <div
+            role="progressbar"
+            aria-valuenow={Math.round(progress)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            className="w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"
+            style={{ height: 6 }}
+          >
             <div
-              className="bg-blue-600 h-2 transition-all duration-300"
+              className="h-full rounded-full bg-blue-600 transition-all duration-300"
               style={{ width: `${Math.max(2, Math.round(progress))}%` }}
             />
           </div>
@@ -122,8 +143,13 @@ export default function MainPage() {
       )}
 
       {error && (
-        <div className="mt-4 w-full max-w-lg p-4 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg">
-          <p className="text-sm text-red-700 dark:text-red-300">{String(error)}</p>
+        <div
+          role="alert"
+          className="mt-4 w-full max-w-lg rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800/60 dark:bg-red-900/20 animate-fade-in"
+        >
+          <p className="text-sm text-red-700 dark:text-red-300">
+            {String(error)}
+          </p>
         </div>
       )}
     </div>

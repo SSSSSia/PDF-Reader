@@ -14,13 +14,14 @@ fitz = pymupdf
 OCR_PROMPT = "OCR:"
 DEFAULT_MODEL = "PaddlePaddle/PaddleOCR-VL-1.5"
 
-# PDF 渲染分辨率（矩阵缩放系数），过低识别率下降、过高 token 成本高
-RENDER_SCALE = 1.8
-# OCR 并发上限，免费额度下保守取值
+# PDF 渲染分辨率（矩阵缩放系数）：学术论文正文字号小，1.8x 下小字模糊导致
+# 漏识别（实测问题）；2.5x 是识别完整度与 token 成本的平衡点。
+RENDER_SCALE = 2.5# OCR 并发上限，免费额度下保守取值
 OCR_CONCURRENCY = 3
 
 
-async def call_ocr(file_path: str, config: dict) -> list:
+async def call_ocr(file_path: str, config: dict, only_pages: list[int] | None = None) -> list:
+    """视觉 OCR。only_pages 指定仅识别这些页（文本层提取后仍缺内容的扫描页）。"""
     api_url = config.get("api_url", "https://api.siliconflow.cn/v1")
     api_key = config.get("api_key", "")
     model = config.get("model", DEFAULT_MODEL)
@@ -29,7 +30,7 @@ async def call_ocr(file_path: str, config: dict) -> list:
         raise ValueError("OCR API Key 未配置")
 
     # 1) PDF → 每页 PNG（内存中，不落盘）。fitz 是阻塞 IO，放到线程避免卡事件循环。
-    page_images = await asyncio.to_thread(_pdf_to_page_images, file_path)
+    page_images = await asyncio.to_thread(_pdf_to_page_images, file_path, only_pages)
     if not page_images:
         raise ValueError("PDF 未解析出任何页面")
 
@@ -52,18 +53,22 @@ async def call_ocr(file_path: str, config: dict) -> list:
                 ],
             }
 
-    results = await asyncio.gather(*[ocr_one(i, b) for i, b in enumerate(page_images)])
+    results = await asyncio.gather(
+        *[ocr_one(page_no, b) for page_no, b in page_images]
+    )
     return list(results)
 
 
-def _pdf_to_page_images(file_path: str) -> list[bytes]:
+def _pdf_to_page_images(file_path: str, only_pages: list[int] | None = None) -> list[tuple[int, bytes]]:
+    """渲染指定页（缺省全部页）为 PNG。返回 (页号, 图片字节) 列表。"""
     doc = fitz.open(file_path)
     try:
         out = []
         mat = fitz.Matrix(RENDER_SCALE, RENDER_SCALE)
-        for page in doc:
-            pix = page.get_pixmap(matrix=mat)
-            out.append(pix.tobytes("png"))
+        page_nums = only_pages if only_pages is not None else range(len(doc))
+        for i in page_nums:
+            pix = doc[i].get_pixmap(matrix=mat)
+            out.append((i, pix.tobytes("png")))
         return out
     finally:
         doc.close()
@@ -84,6 +89,8 @@ async def _ocr_image(img_bytes: bytes, api_url: str, api_key: str, model: str) -
                 ],
             }
         ],
+        # PaddleOCR-VL 总上下文 16384 tokens，max_tokens 顶满会 400（实测），
+        # 8192 是安全上限；超出部分由下方 finish_reason 提示。
         "max_tokens": 8192,
         "temperature": 0.01,
     }
@@ -98,33 +105,27 @@ async def _ocr_image(img_bytes: bytes, api_url: str, api_key: str, model: str) -
             json=payload,
             headers=headers,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            # 保留响应体，4xx 的具体原因（如 max_tokens 超限）都在 body 里
+            raise RuntimeError(
+                f"OCR 请求失败 HTTP {resp.status_code}: {resp.text[:300]}"
+            )
         data = resp.json()
 
-    return data["choices"][0]["message"]["content"].strip()
+    choice = data["choices"][0]
+    text = (choice["message"]["content"] or "").strip()
+    # 密集学术页可能超出单次输出上限：显式提示截断，避免"内容不全"却无感知
+    if choice.get("finish_reason") == "length":
+        text += "\n\n> ⚠️ 本页内容超出单次识别上限，末尾部分被截断"
+    return text
 
 
-# ── 段/句级切块（用户决策：对照按段/句切分块）──────────────────────────
-# OCR 返回的是「整页 markdown 一块」；在翻译前切成段/句级 block，
-# 既贴合双语逐块对照，又让译文缓存更细粒度。切块与 OCR 缓存解耦：
-# OCR 缓存始终存整页块，切块在缓存读取之后进行，因此改切块策略不影响命中。
-_SENT_SPLIT = re.compile(r"(?<=[。.!?！？；;\n])")
-
-
+# ── 段级切块（用户决策：双语按块对照）──────────────────────────────────
+# 按空行切段，一段一块。不做句级切分——句级切分会把连贯论述拆成
+# 一句一句的碎片（实测反馈"排版都是一句一句的"），且打断表格/标题结构。
+# 切块发生在 OCR 缓存读取之后，因此改切块策略不影响缓存命中。
 def split_into_blocks(text: str) -> list[str]:
     text = (text or "").strip()
     if not text:
         return []
-    parts: list[str] = []
-    for para in re.split(r"\n\s*\n", text):
-        para = para.strip()
-        if not para:
-            continue
-        if len(para) <= 300:
-            parts.append(para)
-            continue
-        for s in _SENT_SPLIT.split(para):
-            s = s.strip()
-            if s:
-                parts.append(s)
-    return parts
+    return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]

@@ -1,12 +1,16 @@
+import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
-import { useUiStore } from "../stores/uiStore";
 import LoadingSpinner from "./common/LoadingSpinner";
-import PdfViewer from "./PdfViewer";
-import ExportBar from "./ExportBar";
+import MarkdownText from "./common/MarkdownText";
+import ReaderToolbar from "./ReaderToolbar";
 
+/**
+ * 紧跟模式：连续文档流排版（对标 Scholaread）——
+ * 原文段落在上，译文紧贴其下，段落间用虚线分隔，无卡片框，
+ * 图片/表格按原文档顺序穿插在排版流中。
+ */
 export default function InlinePage() {
   const { pages, currentPage, isLoading } = usePdfStore();
-  const { mode, setMode } = useUiStore();
 
   // 按分页索引取当前页（修复 R2：原先只渲染 pages[0]）
   const page = pages[currentPage];
@@ -14,60 +18,42 @@ export default function InlinePage() {
   if (isLoading) return <LoadingSpinner text="加载中..." />;
   if (!page) {
     return (
-      <div className="text-center py-20">
-        <p className="text-gray-500 text-lg">请先上传 PDF 并完成识别</p>
-        <a
-          href="/"
-          className="mt-4 inline-block px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+      <div className="py-20 text-center">
+        <div
+          className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-slate-100 text-2xl dark:bg-slate-800"
+          aria-hidden="true"
         >
+          📄
+        </div>
+        <p className="mb-4 text-slate-600 dark:text-slate-300">
+          请先上传 PDF 并完成识别
+        </p>
+        <Link to="/" className="btn-primary">
           返回首页
-        </a>
+        </Link>
       </div>
     );
   }
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-4 mb-4">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setMode("bilingual")}
-            className={`px-4 py-1 rounded text-sm ${
-              mode === "bilingual"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-200 text-gray-700"
-            }`}
-          >
-            左右对照
-          </button>
-          <button
-            onClick={() => setMode("inline")}
-            className={`px-4 py-1 rounded text-sm ${
-              mode === "inline"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-200 text-gray-700"
-            }`}
-          >
-            紧跟模式
-          </button>
-        </div>
-        <div className="flex items-center gap-3">
-          <ExportBar />
-          <PdfViewer />
-        </div>
-      </div>
+      <ReaderToolbar />
 
-      <div className="space-y-4 overflow-y-auto h-[calc(100vh-180px)]">
-        {page.blocks.map((block) => (
-          <div key={block.block_id} className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-            <div className="text-base leading-relaxed font-medium dark:text-gray-100">
-              {block.original}
+      <div className="h-[calc(100vh-170px)] overflow-y-auto">
+        <div className="mx-auto max-w-4xl px-2 pb-16">
+          {page.blocks.map((block) => (
+            <div key={block.block_id} className="mb-5">
+              <div className="text-slate-900 dark:text-slate-100">
+                <MarkdownText text={block.original} />
+              </div>
+              {block.translated && (
+                <div className="mt-1.5 border-b border-dashed border-slate-300 pb-2 text-slate-600 dark:border-slate-600 dark:text-slate-300">
+                  <MarkdownText text={block.translated} />
+                </div>
+              )}
             </div>
-            <div className="mt-2 text-base leading-relaxed text-blue-700 dark:text-blue-300 border-l-4 border-blue-400 pl-4">
-              {block.translated || "待翻译..."}
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </div>
   );

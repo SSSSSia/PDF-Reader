@@ -8,7 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import settings
 from ocr.siliconflow import call_ocr, split_into_blocks
-from translate.base import translate_text
+from ocr.textlayer import extract_all, MIN_TEXT_CHARS
+from translate.base import translate_batch, translate_text
 from cache.file_cache import (
     file_hash,
     text_hash,
@@ -18,8 +19,23 @@ from cache.file_cache import (
     write_cache,
 )
 
-# 最大并发翻译请求数。SiliconFlow 免费额度对并发敏感，保守取 4。
-MAX_CONCURRENCY = 4
+# 最大并发翻译块组数（每组一次合并请求）。8 并发 × 10 段/组，
+# 免费档实测可承载；失败自动逐条回退，不影响正确性。
+MAX_CONCURRENCY = 8
+
+# 文本层提取结果在 OCR 缓存中的伪模型名（与视觉模型缓存隔离）。
+# v2：提取内容增加 HTML 清理（<br>/<sup>/注释），旧缓存含脏数据需失效。
+TEXT_LAYER_MODEL = "text-layer-v2"
+
+
+def _single_block(page: int, text: str) -> dict:
+    return {
+        "block_id": 0,
+        "page": page,
+        "original": text,
+        "translated": "",
+        "position": {"y_start": 0, "y_end": 0},
+    }
 
 _jobs: dict[str, dict] = {}
 
@@ -78,39 +94,60 @@ def _split_page(page: dict) -> dict:
 
 
 async def _load_or_run_ocr(file_path: str, pdf_hash: str, config: dict, job: dict) -> list:
-    """
-    按页缓存 OCR 结果。
-    - 若第 0 页命中缓存且总页数已知，且所有页均命中 -> 完全跳过网络请求。
-    - 否则重新 OCR，并把每一页（含总页数）写入缓存。
-    """
+    """混合 OCR（修复"内容不全"）：
+    1. 文本层优先——电子版 PDF 直接完整提取，零成本零时延；
+    2. 仅无文本层的扫描页/图片页回退视觉 OCR（且只调这些页）；
+    3. 两类结果统一按页缓存（文本层用伪模型名，与视觉模型缓存隔离）。"""
     cache_dir = settings.cache_dir
-    model = config.get("model", "")
+    vision_model = config.get("model", "")
 
-    first = read_cache(cache_dir, ocr_key(pdf_hash, 0, model))
-    total_pages = first.get("total_pages") if first else None
+    # 1) 文本层提取（纯 CPU，毫秒级）；图片导出到按文件哈希隔离的目录
+    job["progress"] = 8
+    image_dir = os.path.join(cache_dir, "images", pdf_hash[:16])
+    layer = await asyncio.to_thread(extract_all, file_path, image_dir)
+    total_pages = len(layer)
+    job["stats"]["ocr_total"] = total_pages
 
-    if isinstance(total_pages, int) and total_pages > 0:
-        pages: list = []
-        for i in range(total_pages):
-            c = read_cache(cache_dir, ocr_key(pdf_hash, i, model))
-            if not c:
-                pages = []
-                break
-            pages.append({"page": i, "blocks": c["blocks"]})
-        if pages:
-            job["stats"]["ocr_cache_hit"] = total_pages
-            job["stats"]["ocr_total"] = total_pages
-            return pages
+    pages: list = [None] * total_pages
+    vision_pages: list[int] = []
 
-    pages = await call_ocr(file_path, config)
-    for p in pages:
-        write_cache(
-            cache_dir,
-            ocr_key(pdf_hash, p["page"], model),
-            {"total_pages": len(pages), "blocks": p["blocks"]},
-        )
-    job["stats"]["ocr_total"] = len(pages)
-    return pages
+    for i, md in enumerate(layer):
+        if md:  # 有文本层
+            cached = read_cache(cache_dir, ocr_key(pdf_hash, i, TEXT_LAYER_MODEL))
+            if cached and cached.get("blocks"):
+                blocks = cached["blocks"]
+                job["stats"]["ocr_cache_hit"] += 1
+            else:
+                blocks = [_single_block(i, md)]
+                write_cache(
+                    cache_dir,
+                    ocr_key(pdf_hash, i, TEXT_LAYER_MODEL),
+                    {"blocks": blocks},
+                )
+            pages[i] = {"page": i, "blocks": blocks}
+        else:  # 无文本层 → 视觉路线
+            cached = read_cache(cache_dir, ocr_key(pdf_hash, i, vision_model))
+            if cached and cached.get("blocks"):
+                pages[i] = {"page": i, "blocks": cached["blocks"]}
+                job["stats"]["ocr_cache_hit"] += 1
+            else:
+                vision_pages.append(i)
+
+    # 2) 扫描页走视觉 OCR（只调缺的页）
+    if vision_pages:
+        vis = await call_ocr(file_path, config, only_pages=vision_pages)
+        for p in vis:
+            pages[p["page"]] = p
+            write_cache(
+                cache_dir,
+                ocr_key(pdf_hash, p["page"], vision_model),
+                {"blocks": p["blocks"]},
+            )
+
+    result = [p for p in pages if p is not None]
+    if not result:
+        raise ValueError("PDF 未解析出任何页面内容")
+    return result
 
 
 async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
@@ -154,26 +191,51 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
 
         total = max(len(pending), 1)
         done = 0
+        # 并发按「块组」计：每组一次合并请求（6 段），请求数约为逐条模式的 1/6
         sem = asyncio.Semaphore(MAX_CONCURRENCY)
 
         # 提前挂载 pages：block 对象是引用，翻译过程中前端轮询即可渐进看到已完成的译文
         job["pages"] = pages
 
-        async def _translate_one(block: dict, key: str):
+        async def _translate_chunk(chunk: list[tuple]):
             nonlocal done
             async with sem:
-                translated = await translate_text(
-                    block["original"], source_lang, target_lang, t_cfg
-                )
-                block["translated"] = translated
-                write_cache(settings.cache_dir, key, {"translated": translated})
-                done += 1
-                job["progress"] = 30 + int(done / total * 70)
+                texts = [b["original"] for _, b, _ in chunk]
+                try:
+                    outs = await translate_batch(
+                        texts, source_lang, target_lang, t_cfg
+                    )
+                    if len(outs) != len(texts):
+                        raise ValueError(
+                            f"译文数量不匹配: 期望 {len(texts)} 得到 {len(outs)}"
+                        )
+                except Exception:
+                    # 批量失败：逐条回退，宁可慢不可丢
+                    outs = []
+                    for t in texts:
+                        try:
+                            outs.append(
+                                await translate_text(
+                                    t, source_lang, target_lang, t_cfg
+                                )
+                            )
+                        except Exception as e:
+                            print(f"[translate] 单段翻译失败: {e}")
+                            outs.append("")
+                for (_, block, key), translated in zip(chunk, outs):
+                    block["translated"] = translated
+                    write_cache(settings.cache_dir, key, {"translated": translated})
+                    done += 1
+                    job["progress"] = 30 + int(done / total * 70)
+
+        chunks = [
+            pending[i : i + 10] for i in range(0, len(pending), 10)
+        ]
 
         try:
-            await asyncio.gather(*[_translate_one(b, k) for _p, b, k in pending])
+            await asyncio.gather(*[_translate_chunk(c) for c in chunks])
         except Exception:
-            # 单个 block 失败不应让整本书前功尽弃：已完成的保留，失败的留空
+            # 单个 chunk 失败不应让整本书前功尽弃：已完成的保留，失败的留空
             pass
 
         job["pages"] = pages

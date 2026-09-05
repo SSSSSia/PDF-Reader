@@ -20,17 +20,33 @@ export function isTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+/** fetch 包装：非 2xx 一律抛错（fetch 对 4xx/5xx 默认不 reject，会导致静默失败） */
+async function apiFetch(url: string, init?: RequestInit): Promise<unknown> {
+  const r = await fetch(url, init);
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try {
+      const body = await r.json();
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* 非 JSON 响应，保留状态码 */
+    }
+    throw new Error(`后端请求失败: ${detail}`);
+  }
+  return r.json();
+}
+
 /** 启动流水线，返回与 Rust run_pipeline 一致的 JSON 字符串 */
 export async function runPipeline(filePath: string): Promise<string> {
   if (isTauri()) {
     return (await invoke("run_pipeline", { file_path: filePath })) as string;
   }
-  const r = await fetch(`${API_BASE}/api/pipeline/run`, {
+  const r = await apiFetch(`${API_BASE}/api/pipeline/run`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ file_path: filePath }),
   });
-  return JSON.stringify(await r.json());
+  return JSON.stringify(r);
 }
 
 /** 查询流水线状态，返回与 Rust get_pipeline_status 一致的 JSON 字符串 */
@@ -38,10 +54,10 @@ export async function getPipelineStatus(jobId: string): Promise<string> {
   if (isTauri()) {
     return (await invoke("get_pipeline_status", { job_id: jobId })) as string;
   }
-  const r = await fetch(
+  const r = await apiFetch(
     `${API_BASE}/api/pipeline/status/${encodeURIComponent(jobId)}`,
   );
-  return JSON.stringify(await r.json());
+  return JSON.stringify(r);
 }
 
 /** 读取配置（JSON 字符串），与 Rust load_config 一致 */
@@ -49,8 +65,7 @@ export async function loadConfig(): Promise<string> {
   if (isTauri()) {
     return (await invoke("load_config")) as string;
   }
-  const r = await fetch(`${API_BASE}/api/config`);
-  return JSON.stringify(await r.json());
+  return JSON.stringify(await apiFetch(`${API_BASE}/api/config`));
 }
 
 /** 保存配置（参数为 JSON 字符串），与 Rust save_config 一致 */
@@ -59,11 +74,33 @@ export async function saveConfig(configStr: string): Promise<void> {
     await invoke("save_config", { config_str: configStr });
     return;
   }
-  await fetch(`${API_BASE}/api/config`, {
+  await apiFetch(`${API_BASE}/api/config`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: configStr,
   });
+}
+
+/** 测试 API 连通性（经本地后端代理，规避浏览器 CORS 与 Tauri 私有网络限制） */
+export interface TestSpec {
+  api_url: string;
+  api_key: string;
+  model: string;
+  mode: "text" | "ocr";
+}
+
+export async function testApiConnection(
+  spec: TestSpec,
+): Promise<{ status: string; model: string }> {
+  if (isTauri()) {
+    const r = (await invoke("test_api_connection", { spec })) as string;
+    return JSON.parse(r);
+  }
+  return apiFetch(`${API_BASE}/api/config/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(spec),
+  }) as Promise<{ status: string; model: string }>;
 }
 
 /** 检查文件是否存在，与 Rust check_file_exists 一致 */
@@ -71,10 +108,9 @@ export async function checkFileExists(filePath: string): Promise<boolean> {
   if (isTauri()) {
     return (await invoke("check_file_exists", { file_path: filePath })) as boolean;
   }
-  const r = await fetch(
+  const data = (await apiFetch(
     `${API_BASE}/api/file/exists?path=${encodeURIComponent(filePath)}`,
-  );
-  const data = await r.json();
+  )) as { exists: boolean };
   return !!data.exists;
 }
 
@@ -84,6 +120,14 @@ export function convertFileSrc(filePath: string): string {
     return tauriConvertFileSrc(filePath);
   }
   return `${API_BASE}/api/file/raw?path=${encodeURIComponent(filePath)}`;
+}
+
+/** 本地资源（论文插图等）→ 可访问 URL；非本地路径原样返回 */
+export function assetUrl(src: string): string {
+  if (/^[a-zA-Z]:[\\/]/.test(src) || src.startsWith("/")) {
+    return convertFileSrc(src);
+  }
+  return src;
 }
 
 /** 打开文件选择对话框。Tauri 返回真实路径；浏览器走上传并返回服务端路径 */
@@ -102,8 +146,10 @@ export async function openFileDialog(): Promise<string | null> {
 export async function uploadFile(file: File): Promise<string> {
   const form = new FormData();
   form.append("file", file);
-  const r = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: form });
-  const data = await r.json();
+  const data = (await apiFetch(`${API_BASE}/api/upload`, {
+    method: "POST",
+    body: form,
+  })) as { path: string };
   return data.path;
 }
 

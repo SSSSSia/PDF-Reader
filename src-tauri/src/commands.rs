@@ -68,7 +68,7 @@ pub async fn load_config(state: State<'_, AppState>) -> Result<String, String> {
                 provider: "siliconflow".to_string(),
                 api_key: "".to_string(),
                 api_url: "https://api.siliconflow.cn/v1".to_string(),
-                model: "Qwen/Qwen2.5-7B-Instruct".to_string(),
+                model: "deepseek-ai/DeepSeek-V4-Flash".to_string(),
                 target_language: "en".to_string(),
                 source_language: "zh".to_string(),
             },
@@ -82,7 +82,9 @@ pub async fn load_config(state: State<'_, AppState>) -> Result<String, String> {
     }
 }
 
-#[tauri::command]
+// rename_all = "snake_case"：Tauri v2 默认要求 JS 端传 camelCase 参数，
+// 前端桥接层统一传 snake_case（config_str / file_path / job_id），故显式声明。
+#[tauri::command(rename_all = "snake_case")]
 pub async fn save_config(state: State<'_, AppState>, config_str: String) -> Result<(), String> {
     let path = state.config_path.clone();
     if let Some(parent) = path.parent() {
@@ -110,7 +112,7 @@ async fn ensure_backend_ready(state: &AppState) -> Result<(), String> {
     Err("FastAPI 后端未就绪（已等待 15 秒）".to_string())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn run_pipeline(state: State<'_, AppState>, file_path: String) -> Result<String, String> {
     ensure_backend_ready(&state).await?;
     let client = reqwest::Client::new();
@@ -125,7 +127,7 @@ pub async fn run_pipeline(state: State<'_, AppState>, file_path: String) -> Resu
     Ok(body)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn get_pipeline_status(
     state: State<'_, AppState>,
     job_id: String,
@@ -141,7 +143,7 @@ pub async fn get_pipeline_status(
     Ok(body)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn check_file_exists(_state: State<'_, AppState>, file_path: String) -> Result<bool, String> {
     Ok(std::path::Path::new(&file_path).exists())
 }
@@ -149,6 +151,31 @@ pub async fn check_file_exists(_state: State<'_, AppState>, file_path: String) -
 #[tauri::command]
 pub async fn get_cache_dir(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state.cache_dir.to_string_lossy().to_string())
+}
+
+/// 代理「测试连接」请求到 FastAPI /api/config/test。
+/// Tauri webview 直连第三方/本地 API 有 CORS 与私有网络访问限制，统一走后端。
+#[tauri::command]
+pub async fn test_api_connection(
+    state: State<'_, AppState>,
+    spec: serde_json::Value,
+) -> Result<String, String> {
+    ensure_backend_ready(&state).await?;
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/config/test", state.fastapi_url);
+    let resp = client
+        .post(&url)
+        .json(&spec)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    // 不因 4xx/5xx 直接失败：把状态码与 body 一起交由前端展示具体原因
+    let status = resp.status().as_u16();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    if status >= 400 {
+        return Err(format!("HTTP {}: {}", status, body));
+    }
+    Ok(body)
 }
 
 /// 将导出的双语内容写入用户所选路径（Markdown / 纯文本）。

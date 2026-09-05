@@ -2,38 +2,122 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  .dark {
+    color-scheme: dark;
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-800 antialiased dark:bg-slate-900 dark:text-slate-200;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    transition: background-color 200ms cubic-bezier(0.25, 1, 0.5, 1),
+      color 200ms cubic-bezier(0.25, 1, 0.5, 1);
+  }
+
+  ::selection {
+    background: rgb(59 130 246 / 0.15);
+  }
+
+  /* 全局统一键盘焦点样式 */
+  :focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+  }
+
+  /* 尊重系统"减少动态效果"设置 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  background: #f5f5f5;
-  color: #333;
-}
-
-.dark body {
-  background: #1a1a1a;
-  color: #e0e0e0;
-}
-
+/* ---------- 滚动条：细、中性、不喧宾夺主 ---------- */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #888;
+  background: #cbd5e1;
   border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: #94a3b8;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+@layer components {
+  /* 卡片容器：亮色用边框+极轻阴影，暗色仅靠表面色分层 */
+  .card {
+    @apply rounded-lg border border-slate-200 bg-white shadow-sm
+           dark:border-slate-700 dark:bg-slate-800 dark:shadow-none;
+  }
+
+  /* 主按钮：唯一的蓝色实心底，留给最关键的操作 */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2
+           text-sm font-medium text-white transition-colors duration-150
+           bg-blue-600 hover:bg-blue-700 active:bg-blue-800
+           disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  /* 次级按钮：边框白底，用于常规操作 */
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg
+           border border-slate-300 px-3.5 py-1.5 text-sm font-medium
+           text-slate-700 transition-colors duration-150
+           bg-white hover:bg-slate-50 active:bg-slate-100
+           disabled:pointer-events-none disabled:opacity-50
+           dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200
+           dark:hover:bg-slate-700 dark:active:bg-slate-600;
+  }
+
+  /* 表单输入：全站统一 */
+  .input-field {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+           text-sm text-slate-800 transition-colors duration-150
+           placeholder-slate-400 focus:border-blue-500 focus:outline-none
+           focus:ring-2 focus:ring-blue-500/30
+           dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100
+           dark:placeholder-slate-500;
+  }
+
+  .form-label {
+    @apply mb-1 block text-sm font-medium text-slate-600 dark:text-slate-300;
+  }
 }

@@ -27,16 +27,13 @@ export default function ExportBar() {
       <select
         value={format}
         onChange={(e) => setFormat(e.target.value as ExportFormat)}
-        className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100"
+        aria-label="导出格式"
+        className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-700 transition-colors duration-150 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
       >
         <option value="markdown">Markdown</option>
         <option value="text">纯文本</option>
       </select>
-      <button
-        onClick={handle}
-        disabled={busy || !pages.length}
-        className="px-3 py-1 rounded text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-      >
+      <button onClick={handle} disabled={busy || !pages.length} className="btn-secondary">
         {busy ? "导出中…" : "导出"}
       </button>
     </div>

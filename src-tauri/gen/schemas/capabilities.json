@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities","local":true,"windows":["main"],"permissions":[{"identifier":"core:default"}]}}
+{"default":{"identifier":"default","description":"Default capabilities for the main window","local":true,"windows":["main"],"permissions":[{"identifier":"core:default"},{"identifier":"dialog:default"},{"identifier":"shell:allow-spawn"},{"identifier":"shell:allow-kill"},{"identifier":"shell:allow-stdin-write"}]}}

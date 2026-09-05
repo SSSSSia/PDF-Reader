@@ -4,6 +4,7 @@ mod commands;
 
 use commands::AppState;
 use std::sync::Mutex;
+use tauri::Manager;
 
 fn main() {
     let app_data = std::env::var("APPDATA")

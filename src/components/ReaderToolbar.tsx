@@ -1,11 +1,11 @@
 import { useNavigate } from "react-router-dom";
 import { useUiStore } from "../stores/uiStore";
 import ExportBar from "./ExportBar";
-import PdfViewer from "./PdfViewer";
 
 /**
- * 阅读页共享工具栏：阅读模式切换（分段控件）+ 导出 + 页面导航。
+ * 阅读页共享工具栏：阅读模式切换（分段控件）+ 导出。
  * 由 BilingualPage 与 InlinePage 共用，保证两个视图工具栏完全一致。
+ * 注：原 PdfViewer 页码导航已随「整篇连续滚动」改版移除（用户决策 2026-09-06）。
  */
 export default function ReaderToolbar() {
   const { mode, setMode } = useUiStore();
@@ -50,10 +50,7 @@ export default function ReaderToolbar() {
           紧跟模式
         </button>
       </div>
-      <div className="flex items-center gap-3">
-        <ExportBar />
-        <PdfViewer />
-      </div>
+      <ExportBar />
     </div>
   );
 }

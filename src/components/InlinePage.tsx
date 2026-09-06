@@ -4,19 +4,15 @@ import MarkdownText from "./common/MarkdownText";
 import ReaderToolbar from "./ReaderToolbar";
 
 /**
- * 紧跟模式：连续文档流排版（对标 Scholaread）——
- * 原文段落在上，译文紧贴其下，段落间用虚线分隔，无卡片框，
- * 图片/表格按原文档顺序穿插在排版流中。
+ * 紧跟模式：整篇连续文档流（无分页，对标 Scholaread，用户决策 2026-09-06）——
+ * 原文段落在上，译文紧贴其下，段落间虚线分隔，图片/表格按原文档顺序穿插。
+ * content-visibility:auto 保证长文档滚动性能。
  */
 export default function InlinePage() {
-  const { pages, currentPage, isLoading, progress, error } = usePdfStore();
+  const { pages, isLoading, progress, error } = usePdfStore();
+  const blocks = pages.flatMap((p) => p.blocks);
 
-  // 按分页索引取当前页（修复 R2：原先只渲染 pages[0]）
-  const page = pages[currentPage];
-
-  // 阶段1-T2：不再用 isLoading 全屏遮罩——翻译中原文照常可读，
-  // 译文虚线区随翻译进度逐段出现。
-  if (!page) {
+  if (blocks.length === 0) {
     return (
       <div className="py-20 text-center">
         <div
@@ -67,16 +63,21 @@ export default function InlinePage() {
         </div>
       )}
 
+      {/* 整篇连续文档流：所有页的 block 按文档顺序排布 */}
       <div className="h-[calc(100vh-170px)] overflow-y-auto">
         <div className="mx-auto max-w-4xl px-2 pb-16">
-          {page.blocks.map((block) => (
-            <div key={block.block_id} className="mb-5">
+          {blocks.map((b) => (
+            <div
+              key={`${b.page}-${b.block_id}`}
+              className="mb-5"
+              style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" }}
+            >
               <div className="text-slate-900 dark:text-slate-100">
-                <MarkdownText text={block.original} />
+                <MarkdownText text={b.original} />
               </div>
-              {block.translated && (
+              {b.translated && (
                 <div className="mt-1.5 border-b border-dashed border-slate-300 pb-2 text-slate-600 dark:border-slate-600 dark:text-slate-300">
-                  <MarkdownText text={block.translated} />
+                  <MarkdownText text={b.translated} />
                 </div>
               )}
             </div>

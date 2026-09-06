@@ -1,23 +1,20 @@
 import { Link } from "react-router-dom";
-import { useRef } from "react";
 import { usePdfStore } from "../stores/pdfStore";
-import { useScrollSync } from "../hooks/useScrollSync";
-import { useUiStore } from "../stores/uiStore";
 import MarkdownText from "./common/MarkdownText";
 import ReaderToolbar from "./ReaderToolbar";
 
+/**
+ * 左右对照模式：整篇连续滚动（无分页，对标 Scholaread，用户决策 2026-09-06）。
+ * 对齐采用网格行配对——每一行 = 一个 block 的「原文 | 译文」，
+ * DOM 结构保证左右严格同行（阶段3-T1 提前落地），滚动天然同步，
+ * 不再需要旧的百分比滚动同步（useScrollSync 已退役）。
+ * content-visibility:auto 让长文档只渲染视口附近内容，滚动性能不随页数劣化。
+ */
 export default function BilingualPage() {
-  const { pages, currentPage, isLoading, progress, error } = usePdfStore();
-  const leftRef = useRef<HTMLDivElement>(null);
-  const rightRef = useRef<HTMLDivElement>(null);
-  const { handleScroll } = useScrollSync(leftRef, rightRef);
+  const { pages, isLoading, progress, error } = usePdfStore();
+  const blocks = pages.flatMap((p) => p.blocks);
 
-  // 按分页索引取当前页（修复 R2：原先只渲染 pages[0]）
-  const page = pages[currentPage];
-
-  // 阶段1-T2：不再用 isLoading 全屏遮罩——翻译中原文照常可读，
-  // 译文占位「待翻译...」由下方 block 渲染承担，顶部进度条非阻塞提示进度。
-  if (!page) {
+  if (blocks.length === 0) {
     return (
       <div className="py-20 text-center">
         <div
@@ -68,53 +65,40 @@ export default function BilingualPage() {
         </div>
       )}
 
-      {/* <md 单栏堆叠（浏览器窄窗口）；md+ 双栏对照（Tauri 最小窗宽 900px 恒为双栏） */}
-      <div className="grid h-[calc(100vh-170px)] grid-cols-1 gap-x-6 gap-y-4 overflow-auto md:grid-cols-2">
-        <div
-          ref={leftRef}
-          className="space-y-3 overflow-y-auto pr-2"
-          onScroll={() => handleScroll("left")}
-        >
-          <h3 className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 py-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-500">
-            原文
-          </h3>
-          {page.blocks.map((block) => (
+      {/* 整篇单列滚动：所有页的 block 按文档顺序连续排布 */}
+      <div className="h-[calc(100vh-170px)] overflow-y-auto">
+        <div className="mx-auto max-w-6xl">
+          <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-slate-200 bg-slate-50/95 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95">
+            <div className="py-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              原文
+            </div>
+            <div className="py-2 text-xs font-semibold uppercase tracking-wide text-blue-500 dark:text-blue-400">
+              译文
+            </div>
+          </div>
+
+          {blocks.map((b) => (
             <div
-              key={block.block_id}
-              className="rounded-lg border border-slate-200 bg-white p-3.5 transition-colors duration-150 dark:border-slate-700 dark:bg-slate-800"
-              style={{
-                minHeight: `${Math.max(50, block.original.length * 0.8)}px`,
-              }}
+              key={`${b.page}-${b.block_id}`}
+              className="grid grid-cols-2 gap-x-8 border-b border-dashed border-slate-200 dark:border-slate-700"
+              style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" }}
             >
-              <MarkdownText text={block.original} />
+              <div className="py-3 pr-2 text-slate-900 dark:text-slate-100">
+                <MarkdownText text={b.original} />
+              </div>
+              <div className="border-l border-slate-200 py-3 pl-2 text-blue-900 dark:border-slate-700 dark:text-blue-100">
+                {b.translated ? (
+                  <MarkdownText text={b.translated} />
+                ) : (
+                  <span className="italic text-slate-400 dark:text-slate-500">
+                    待翻译…
+                  </span>
+                )}
+              </div>
             </div>
           ))}
-        </div>
-        <div
-          ref={rightRef}
-          className="space-y-3 overflow-y-auto pl-2"
-          onScroll={() => handleScroll("right")}
-        >
-          <h3 className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 py-2 text-xs font-semibold uppercase tracking-wide text-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-blue-400">
-            译文
-          </h3>
-          {page.blocks.map((block) => (
-            <div
-              key={block.block_id}
-              className="rounded-lg border border-blue-100 bg-white p-3.5 text-blue-900 transition-colors duration-150 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-100"
-              style={{
-                minHeight: `${Math.max(50, block.translated.length * 0.8)}px`,
-              }}
-            >
-              {block.translated ? (
-                <MarkdownText text={block.translated} />
-              ) : (
-                <span className="italic text-slate-400 dark:text-slate-500">
-                  待翻译...
-                </span>
-              )}
-            </div>
-          ))}
+
+          <div className="h-16" aria-hidden="true" />
         </div>
       </div>
     </div>

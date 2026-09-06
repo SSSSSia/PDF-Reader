@@ -2,13 +2,14 @@ import asyncio
 import hashlib
 import os
 import sys
+import time
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import settings
 from ocr.siliconflow import call_ocr, split_into_blocks
-from ocr.textlayer import extract_all, MIN_TEXT_CHARS
+from ocr.textlayer import extract_pages, count_pages, MIN_TEXT_CHARS
 from translate.base import translate_batch, translate_text
 from cache.file_cache import (
     file_hash,
@@ -39,6 +40,37 @@ def _single_block(page: int, text: str) -> dict:
 
 _jobs: dict[str, dict] = {}
 
+# ── job 生命周期（阶段1-T4）──────────────────────────────────────────
+# 旧实现 _jobs 只增不减：每处理一份 PDF 就多一条含全部页面文本的记录，
+# 长期运行必然内存泄漏。策略：容量上限 + TTL 淘汰，且只淘汰已完成的 job
+#（运行中/轮询中的一律保留，前端 30 分钟轮询窗口内的任务绝不被淘汰）。
+MAX_JOBS = 50
+JOB_TTL_SECONDS = 2 * 60 * 60  # 完成后保留 2 小时，供前端/调试复查
+
+
+def _evict_jobs() -> None:
+    now = time.time()
+    # TTL：超期且已完成
+    expired = [
+        jid
+        for jid, j in _jobs.items()
+        if j["status"] in ("done", "failed")
+        and j.get("finished_at")
+        and now - j["finished_at"] > JOB_TTL_SECONDS
+    ]
+    for jid in expired:
+        del _jobs[jid]
+    # 容量：超额时淘汰最旧已完成的
+    if len(_jobs) > MAX_JOBS:
+        finished = sorted(
+            (jid for jid, j in _jobs.items() if j["status"] in ("done", "failed")),
+            key=lambda jid: _jobs[jid].get("finished_at") or 0,
+        )
+        for jid in finished:
+            if len(_jobs) <= MAX_JOBS:
+                break
+            del _jobs[jid]
+
 
 async def run_pipeline(file_path: str) -> dict:
     """
@@ -48,6 +80,8 @@ async def run_pipeline(file_path: str) -> dict:
     """
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"文件不存在: {file_path}")
+
+    _evict_jobs()
 
     pdf_hash = file_hash(file_path)
     job_id = f"{pdf_hash[:16]}_{int(os.path.getmtime(file_path))}"
@@ -94,50 +128,63 @@ def _split_page(page: dict) -> dict:
 
 
 async def _load_or_run_ocr(file_path: str, pdf_hash: str, config: dict, job: dict) -> list:
-    """混合 OCR（修复"内容不全"）：
-    1. 文本层优先——电子版 PDF 直接完整提取，零成本零时延；
-    2. 仅无文本层的扫描页/图片页回退视觉 OCR（且只调这些页）；
-    3. 两类结果统一按页缓存（文本层用伪模型名，与视觉模型缓存隔离）。"""
+    """混合 OCR（修复"内容不全"）+ 页级流式挂载（阶段1-T5）：
+
+    1. 文本层优先——电子版 PDF 直接完整提取，零 API 成本；
+    2. **逐页提取、逐页挂载**：pymupdf4llm 单页约 0.5s（表格检测为主，
+       线程并行实测无效——GIL），整篇 12 页约 6s。改为页级流式后
+       首页约 1 秒即可见，后续页边提取边出现；
+    3. 文本层缓存命中的页毫秒级直接挂载（重跑同一文件秒开）；
+    4. 无文本层的扫描页先挂空占位（保持页序对齐），提取完成后统一走
+       视觉 OCR（只调这些页），结果原地替换占位；
+    5. 两类结果统一按页缓存（文本层用伪模型名，与视觉模型缓存隔离）。"""
     cache_dir = settings.cache_dir
     vision_model = config.get("model", "")
 
-    # 1) 文本层提取（纯 CPU，毫秒级）；图片导出到按文件哈希隔离的目录
-    job["progress"] = 8
-    image_dir = os.path.join(cache_dir, "images", pdf_hash[:16])
-    layer = await asyncio.to_thread(extract_all, file_path, image_dir)
-    total_pages = len(layer)
+    # 页数探测（毫秒级）
+    total_pages = await asyncio.to_thread(count_pages, file_path)
     job["stats"]["ocr_total"] = total_pages
 
+    # 渐进挂载：job_pages 与最终结果同一列表，前端轮询即见逐页增长
+    job_pages: list = []
+    job["pages"] = job_pages
+    job["progress"] = 8
+
+    image_dir = os.path.join(cache_dir, "images", pdf_hash[:16])
     pages: list = [None] * total_pages
     vision_pages: list[int] = []
 
-    for i, md in enumerate(layer):
-        if md:  # 有文本层
-            cached = read_cache(cache_dir, ocr_key(pdf_hash, i, TEXT_LAYER_MODEL))
-            if cached and cached.get("blocks"):
-                blocks = cached["blocks"]
-                job["stats"]["ocr_cache_hit"] += 1
-            else:
+    for i in range(total_pages):
+        # 文本层缓存命中 → 直接挂载
+        cached = read_cache(cache_dir, ocr_key(pdf_hash, i, TEXT_LAYER_MODEL))
+        if cached and cached.get("blocks"):
+            pages[i] = {"page": i, "blocks": cached["blocks"]}
+            job["stats"]["ocr_cache_hit"] += 1
+        else:
+            md = (await asyncio.to_thread(extract_pages, file_path, [i], image_dir))[0]
+            if md:  # 有文本层
                 blocks = [_single_block(i, md)]
                 write_cache(
-                    cache_dir,
-                    ocr_key(pdf_hash, i, TEXT_LAYER_MODEL),
-                    {"blocks": blocks},
+                    cache_dir, ocr_key(pdf_hash, i, TEXT_LAYER_MODEL), {"blocks": blocks}
                 )
-            pages[i] = {"page": i, "blocks": blocks}
-        else:  # 无文本层 → 视觉路线
-            cached = read_cache(cache_dir, ocr_key(pdf_hash, i, vision_model))
-            if cached and cached.get("blocks"):
-                pages[i] = {"page": i, "blocks": cached["blocks"]}
-                job["stats"]["ocr_cache_hit"] += 1
-            else:
-                vision_pages.append(i)
+                pages[i] = {"page": i, "blocks": blocks}
+            else:  # 无文本层 → 视觉路线（先查缓存，未命中挂占位保持页序）
+                vcached = read_cache(cache_dir, ocr_key(pdf_hash, i, vision_model))
+                if vcached and vcached.get("blocks"):
+                    pages[i] = {"page": i, "blocks": vcached["blocks"]}
+                    job["stats"]["ocr_cache_hit"] += 1
+                else:
+                    vision_pages.append(i)
+                    pages[i] = {"page": i, "blocks": []}
+        job_pages.append(pages[i])
+        job["progress"] = 8 + int((i + 1) / total_pages * 22)
 
-    # 2) 扫描页走视觉 OCR（只调缺的页）
+    # 扫描页走视觉 OCR（只调缺的页），结果原地替换占位
     if vision_pages:
         vis = await call_ocr(file_path, config, only_pages=vision_pages)
         for p in vis:
             pages[p["page"]] = p
+            job_pages[p["page"]] = p  # 占位时序即页序，索引对齐
             write_cache(
                 cache_dir,
                 ocr_key(pdf_hash, p["page"], vision_model),
@@ -241,10 +288,12 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         job["pages"] = pages
         job["status"] = "done"
         job["progress"] = 100
+        job["finished_at"] = time.time()
     except Exception as e:
         job["status"] = "failed"
         job["error"] = str(e)
         job["progress"] = job.get("progress", 0)
+        job["finished_at"] = time.time()
 
 
 async def get_pipeline_status(job_id: str) -> dict:

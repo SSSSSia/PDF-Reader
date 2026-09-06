@@ -27,3 +27,4 @@ cache/
 # 本地项目记忆（个人/会话级，非源码）
 .workbuddy/
 test_ocr/
+.smoke*

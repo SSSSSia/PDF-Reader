@@ -57,16 +57,28 @@ def _normalize_image_refs(md: str, image_dir: str) -> str:
     return _IMG_REF.sub(repl, md)
 
 
-def extract_all(file_path: str, image_dir: str | None = None) -> list[str | None]:
-    """提取全部页面的文本层 Markdown。
+def count_pages(file_path: str) -> int:
+    """返回 PDF 页数（纯本地毫秒级）。"""
+    doc = pymupdf.open(file_path)
+    try:
+        return len(doc)
+    finally:
+        doc.close()
 
-    image_dir 给定时，页内嵌入图片导出为 PNG 并在 Markdown 中保留引用。
-    返回与页数等长的列表；无有效文本层的页为 None（由调用方回退视觉 OCR）。
-    纯 CPU 操作，12 页论文毫秒级完成。
+
+def extract_pages(
+    file_path: str, page_nums: list[int], image_dir: str | None = None
+) -> list[str | None]:
+    """提取指定页的文本层 Markdown（页级流式提取的基础，阶段1-T5）。
+
+    page_nums 按序提取，返回等长列表；无有效文本层的页为 None。
+    pymupdf4llm 的图片文件名含页号（{doc}-{page:04d}-{idx:02d}），
+    逐页/分页调用不会互相覆盖。单页提取约 0.5s（表格检测为主），
+    上层逐页调用即可实现「首页秒开、后续页渐进出现」。
     """
     doc = pymupdf.open(file_path)
     try:
-        kwargs: dict = {"page_chunks": True}
+        kwargs: dict = {"page_chunks": True, "pages": page_nums}
         if image_dir:
             os.makedirs(image_dir, exist_ok=True)
             kwargs.update(
@@ -84,3 +96,8 @@ def extract_all(file_path: str, image_dir: str | None = None) -> list[str | None
         return out
     finally:
         doc.close()
+
+
+def extract_all(file_path: str, image_dir: str | None = None) -> list[str | None]:
+    """提取全部页面的文本层 Markdown（兼容入口，内部走 extract_pages）。"""
+    return extract_pages(file_path, list(range(count_pages(file_path))), image_dir)

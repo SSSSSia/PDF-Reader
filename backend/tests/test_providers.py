@@ -9,7 +9,7 @@ from translate.providers.deepl import DeepLProvider
 from translate.providers.google import GoogleProvider
 
 
-def _fake_response(json_data):
+def _fake_response(json_data, status_code=200):
     class _R:
         def raise_for_status(self):
             return None
@@ -17,7 +17,10 @@ def _fake_response(json_data):
         def json(self):
             return json_data
 
-    return _R()
+    r = _R()
+    r.status_code = status_code
+    r.text = ""
+    return r
 
 
 def test_empty_text_returns_empty():

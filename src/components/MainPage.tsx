@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
@@ -7,11 +7,22 @@ import { openFileDialog, uploadFile, isTauri } from "../lib/bridge";
 import LoadingSpinner from "./common/LoadingSpinner";
 
 export default function MainPage() {
-  const { setFile, setFilePath, file, isLoading, progress, error } = usePdfStore();
+  const { setFile, setFilePath, file, pages, isLoading, progress, error } = usePdfStore();
   const { mode } = useUiStore();
   const { processFile } = useOcr();
   const navigate = useNavigate();
   const [isDragging, setIsDragging] = useState(false);
+  // 阶段1-T2：跳转时机由「全部翻译完成」提前到「pages 就绪（OCR 完成）」。
+  // 用 ref 保证同一文件只跳一次；处理新文件时重置。
+  const navigatedRef = useRef(false);
+
+  // pages 首次非空（后端 OCR 完成、progress≈30）即进入阅读页，原文立即可见、译文渐进流入
+  useEffect(() => {
+    if (pages.length > 0 && !navigatedRef.current) {
+      navigatedRef.current = true;
+      navigate(mode === "inline" ? "/reader/inline" : "/reader/bilingual");
+    }
+  }, [pages, mode, navigate]);
 
   // Tauri 环境下监听 OS 文件拖拽（HTML5 drop 在 Tauri 中会被拦截，需走 webview 事件）
   useEffect(() => {
@@ -57,10 +68,10 @@ export default function MainPage() {
     } as any);
     setFilePath(selected);
 
-    const ok = await processFile(selected);
-    if (ok) {
-      navigate(mode === "inline" ? "/reader/inline" : "/reader/bilingual");
-    }
+    // 不 await：跳转由上方 pages 就绪 effect 驱动（OCR 完成即进阅读页），
+    // processFile 的轮询闭包持有 zustand setter，MainPage 卸载后仍正常回传。
+    navigatedRef.current = false;
+    void processFile(selected);
   };
 
   const handleBrowse = async () => {
@@ -108,7 +119,7 @@ export default function MainPage() {
           {isDragging ? "松开以加载 PDF" : "点击选择或拖入 PDF 文件"}
         </h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          识别与翻译完成后自动进入双语阅读
+          识别完成后自动进入阅读，译文边译边显示
         </p>
       </div>
 

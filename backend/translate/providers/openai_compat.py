@@ -42,6 +42,19 @@ def _system_prompt(source_lang: str, target_lang: str) -> str:
 CHUNK_SIZE = 10
 _SEG_SPLIT = re.compile(r"<<<(\d+)>>>")
 
+# ── 连接复用（阶段1-T3）──────────────────────────────────────────────
+# 旧实现每次 translate() 都新建 httpx.AsyncClient——一篇论文 40+ 批次请求
+# 就是 40+ 次 TCP+TLS 握手（每次约 200–400ms 纯浪费）。改为模块级懒加载
+# 单例。uvicorn 单事件循环下安全；客户端关闭（如测试隔离）后自动重建。
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=120)
+    return _client
+
 
 class OpenAICompatProvider(BaseTranslator):
     name = "openai_compat"
@@ -72,19 +85,18 @@ class OpenAICompatProvider(BaseTranslator):
             payload["enable_thinking"] = False
         headers = {"Authorization": f"Bearer {api_key}"}
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{api_url}/chat/completions",
-                json=payload,
-                headers=headers,
-                timeout=120,
+        # 阶段1-T3：复用模块级连接，避免每次请求重建 TCP+TLS
+        resp = await _get_client().post(
+            f"{api_url}/chat/completions",
+            json=payload,
+            headers=headers,
+        )
+        if resp.status_code != 200:
+            # 保留响应体，4xx 的具体原因（模型名/参数错误）都在 body 里
+            raise RuntimeError(
+                f"翻译请求失败 HTTP {resp.status_code}: {resp.text[:300]}"
             )
-            if resp.status_code != 200:
-                # 保留响应体，4xx 的具体原因（模型名/参数错误）都在 body 里
-                raise RuntimeError(
-                    f"翻译请求失败 HTTP {resp.status_code}: {resp.text[:300]}"
-                )
-            data = resp.json()
+        data = resp.json()
 
         return data["choices"][0]["message"]["content"].strip()
 

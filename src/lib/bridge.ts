@@ -125,11 +125,10 @@ export function convertFileSrc(filePath: string): string {
 /** 本地资源（论文插图等）→ 可访问 URL；非本地路径原样返回 */
 export function assetUrl(src: string): string {
   if (/^[a-zA-Z]:[\\/]/.test(src) || src.startsWith("/")) {
-    // 浏览器模式（开发/人工验收）无法用 Tauri asset 协议，改走后端静态端点
-    if (!isTauri()) {
-      return `${API_BASE}/api/asset?path=${encodeURIComponent(src)}`;
-    }
-    return tauriConvertFileSrc(src);
+    // 统一走后端静态端点（2026-09-06 用户反馈"图片显示不出来"）：
+    // Tauri asset 协议受 scope/编码/CSP 多重配置影响是显示断点高发区，
+    // 后端 /api/asset 本地常驻且已做 cache_dir 路径校验，两种模式行为一致。
+    return `${API_BASE}/api/asset?path=${encodeURIComponent(src)}`;
   }
   return src;
 }
@@ -162,6 +161,9 @@ function uploadViaPicker(): Promise<string | null> {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = "application/pdf,.pdf";
+    // 挂载到 DOM（隐藏）：浏览器扩展/自动化工具才能定位并预置文件
+    input.style.display = "none";
+    document.body.appendChild(input);
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return resolve(null);

@@ -71,7 +71,7 @@ async def api_figure_translate(payload: dict):
     - 结果落盘缓存（zh 文件存在即直接返回），重复点击幂等；
     - 路径校验同 /api/asset：仅限 settings.cache_dir 之内。
     """
-    from ocr.figtranslate import translate_figure
+    from ocr import figtranslate
 
     path = str(payload.get("path") or "")
     if not path:
@@ -92,9 +92,12 @@ async def api_figure_translate(payload: dict):
         kind = None
     if kind != "table":
         raise HTTPException(status_code=400, detail="仅支持表格快照的按需翻译")
-    zh = await translate_figure(sidecar_path, None, settings.translate_config)
+    zh = await figtranslate.translate_figure(
+        sidecar_path, None, settings.translate_config
+    )
     if not zh or not os.path.isfile(zh):
-        raise HTTPException(status_code=500, detail="译制图生成失败")
+        reason = figtranslate.last_error() or "未知原因（见后端日志）"
+        raise HTTPException(status_code=500, detail=f"{reason}")
     return {"translated": f"![Table]({zh.replace(os.sep, '/')})"}
 
 

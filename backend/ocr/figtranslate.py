@@ -39,6 +39,13 @@ _FONT_CANDIDATES = [
 
 _font_cache: dict[tuple[str, int], ImageFont.FreeTypeFont] = {}
 
+# 最近一次失败原因（供接口 detail 透传给前端显示，替代静默 500）
+_last_error = ""
+
+
+def last_error() -> str:
+    return _last_error
+
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont | None:
     """按字号加载 CJK 字体（带缓存）。找不到任何字体返回 None（用默认位图字体）。"""
@@ -166,22 +173,28 @@ async def translate_figure(
 
     sidecar_path 为 <fig>.json；译制图写在旁边 <fig>.zh<版本>.png。
     file_path 不传时用 sidecar 里记录的源 PDF（按需触发场景）。"""
+    global _last_error
+    _last_error = ""
     try:
         with open(sidecar_path, encoding="utf-8") as f:
             sidecar = json.load(f)
-    except Exception:
+    except Exception as e:
+        _last_error = f"无法读取表格元数据: {e}"
         return None
     lines = sidecar.get("lines") or []
     if not lines:
+        _last_error = "图内没有可翻译的文字（纯图形或无文本层）"
         return None  # 图里没文字（纯图形），无需译制
     png = sidecar.get("png") or ""
     region = sidecar.get("region") or []
     page_num = sidecar.get("page")
     if not png or not region or not os.path.isfile(png) or page_num is None:
+        _last_error = "快照元数据不完整（png/region/page 缺失或快照文件不存在）"
         return None
     src_pdf = file_path or sidecar.get("pdf") or ""
     if not src_pdf or not os.path.isfile(src_pdf):
-        print("[figtranslate] 源 PDF 不可用，无法渲染无字背景")
+        _last_error = f"源 PDF 不可用: {src_pdf or '(空)'}"
+        print(f"[figtranslate] 源 PDF 不可用，无法渲染无字背景")
         return None
     if t_cfg is None:
         t_cfg = {}
@@ -218,6 +231,7 @@ async def translate_figure(
                     return None
                 translated.extend(outs)
         except Exception as e:
+            _last_error = f"图内文字翻译失败: {e}"
             print(f"[figtranslate] 图内文字翻译失败: {e}")
             return None
         for ln, tr in zip(missing, translated):
@@ -230,8 +244,10 @@ async def translate_figure(
 
     # 2) 无字背景 + 叠字（PIL 渲染是 CPU 密集，放线程）
     def _render() -> str | None:
+        global _last_error
         bg = os.path.splitext(png)[0] + ".bg.png"
         if not _render_textless_bg(src_pdf, page_num, region, bg):
+            _last_error = "无字背景渲染失败（见后端日志）"
             return None
         try:
             _overlay_text(bg, lines, region, zh_png)

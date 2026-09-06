@@ -60,8 +60,10 @@ def _int_to_rgb(color: int) -> tuple[int, int, int]:
 
 
 # 纯标识符/数值标签：型号名（GPT-4o-mini、DALK）、数据集名（WebQSP）、分数等
-# ——这类翻译只会产生截断乱码，本地化图表惯例也是原样保留
-_PLAIN_TOKEN = re.compile(r"^[A-Za-z0-9_\-·.:/()%+≥≤±×—=|,\s]+$")
+# ——这类翻译只会产生截断乱码，本地化图表惯例也是原样保留。
+# 注意：字符类里不能有空格！上一版把 \s 放进去，导致所有带空格的英文短语
+#（Formation of one tree layer 等）被误判为标识符而整图跳过翻译（实测踩坑）
+_PLAIN_TOKEN = re.compile(r"^[A-Za-z0-9_\-·.:/()%+≥≤±×—=|,]+$")
 
 
 def _needs_translation(text: str, target_lang: str) -> bool:
@@ -145,12 +147,16 @@ def _overlay_text(bg_path: str, lines: list[dict], region: list[float], out_path
     img.save(out_path)
 
 
+# 叠字逻辑版本号：改动叠字/翻译过滤逻辑时 +1，使旧译制图自动失效重生成
+OVERLAY_VERSION = "v2"
+
+
 async def translate_figure(
     sidecar_path: str, file_path: str, t_cfg: dict
 ) -> str | None:
     """生成一张译制图，返回译制图路径；失败返回 None（调用方回退原图）。
 
-    sidecar_path 为 <fig>.json；译制图写在旁边 <fig>.zh.png。"""
+    sidecar_path 为 <fig>.json；译制图写在旁边 <fig>.zh<版本>.png。"""
     try:
         with open(sidecar_path, encoding="utf-8") as f:
             sidecar = json.load(f)
@@ -165,7 +171,7 @@ async def translate_figure(
     if not png or not region or not os.path.isfile(png) or page_num is None:
         return None
 
-    zh_png = png[:-4] + ".zh.png"
+    zh_png = png[:-4] + f".zh.{OVERLAY_VERSION}.png"
     if os.path.isfile(zh_png):
         return zh_png  # 已生成过（重跑同一文件）
 
@@ -175,10 +181,17 @@ async def translate_figure(
     # 1) 批量翻译图内文字。
     #    标识符/数值行原样叠回（不浪费 API 也不产生截断乱码）；
     #    已翻过的行持久化在 sidecar 里，重渲染不重复调 API。
+    #    译文与原文相同（历史错误缓存，如标识符误判版过滤的产物）→ 重翻。
     for ln in lines:
         if not _needs_translation(ln["text"], target_lang):
             ln["translated"] = ln["text"]
-    missing = [ln for ln in lines if "translated" not in ln]
+    missing = [
+        ln
+        for ln in lines
+        if "translated" not in ln
+        or not ln["translated"].strip()
+        or ln["translated"].strip() == ln["text"].strip()
+    ]
     if missing:
         texts = [ln["text"] for ln in missing]
         translated: list[str] = []

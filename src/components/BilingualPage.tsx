@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import MarkdownText from "./common/MarkdownText";
+import TranslatableImage from "./common/TranslatableImage";
 import ReaderToolbar from "./ReaderToolbar";
 
 /**
@@ -88,11 +89,11 @@ export default function BilingualPage() {
                 style={{ contentVisibility: "auto", containIntrinsicSize: "auto 260px" }}
               >
                 <div className="py-3 pr-2">
-                  <MarkdownText text={b.original} />
+                  <TranslatableImage md={b.original} />
                 </div>
                 <div className="border-l border-slate-200 py-3 pl-2 dark:border-slate-700">
-                  {/* 译制图（原排版+图内文字译文）；未生成完成时回退原图 */}
-                  <MarkdownText text={b.translated || b.original} />
+                  {/* 图表默认右栏也显示原图；表格可点按生成译制图 */}
+                  <TranslatableImage md={b.translated || b.original} />
                 </div>
               </div>
             ) : (

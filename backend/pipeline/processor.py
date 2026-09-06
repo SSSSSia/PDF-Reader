@@ -30,7 +30,8 @@ MAX_CONCURRENCY = 8
 # v3：图片策略改为图表区域快照（矢量图/碎栅格统一截图插回），markdown 内容变化。
 # v4：图表内部文字 redact 剔除（不再与快照图重复），markdown 内容变化。
 # v5：表格也按快照处理（文本表格转 markdown 必错位，用户决策），markdown 变化。
-TEXT_LAYER_MODEL = "text-layer-v5"
+# v6：快照按类型命名（tab_*/fig_*），sidecar 记录 kind 与源 PDF，markdown 变化。
+TEXT_LAYER_MODEL = "text-layer-v6"
 
 # 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
 # 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import MarkdownText from "./common/MarkdownText";
+import TranslatableImage from "./common/TranslatableImage";
 import ReaderToolbar from "./ReaderToolbar";
 
 /**
@@ -76,10 +77,10 @@ export default function InlinePage() {
               style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" }}
             >
               {isPureImage(b.original) ? (
-                /* 图表块：只出现一次，优先显示译制图（原排版+图内文字译文），
-                   未生成完成时回退原图；下方图注块照常原文+译文对照 */
+                /* 图表块：只出现一次，默认原图；表格图带「译」按钮可按需
+                   生成译制图（原排版+表内文字译文），下方图注走正文对照 */
                 <figure className="my-6 flex flex-col items-center">
-                  <MarkdownText text={b.translated || b.original} />
+                  <TranslatableImage md={b.translated || b.original} />
                 </figure>
               ) : (
                 <>

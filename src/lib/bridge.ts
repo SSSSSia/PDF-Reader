@@ -36,6 +36,20 @@ async function apiFetch(url: string, init?: RequestInit): Promise<unknown> {
   return r.json();
 }
 
+/**
+ * 按需生成表格译制图（2026-09-06 用户决策：全文翻译完成后点按触发）。
+ * 传入表格快照 PNG 的绝对路径，返回译制图 markdown（![Table](zh路径)）。
+ * 后端有文件级缓存：同一张表重复点击直接返回已生成的译制图。
+ */
+export async function translateFigureImage(path: string): Promise<string> {
+  const data = (await apiFetch(`${API_BASE}/api/figure/translate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  })) as { translated: string };
+  return data.translated;
+}
+
 /** 启动流水线，返回与 Rust run_pipeline 一致的 JSON 字符串 */
 export async function runPipeline(filePath: string): Promise<string> {
   if (isTauri()) {

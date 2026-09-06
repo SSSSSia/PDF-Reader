@@ -85,7 +85,7 @@ def _render_textless_bg(file_path: str, page_num: int, region: list[float], out_
     （图表的柱形/折线/坐标轴都是矢量——默认会被一起删掉，实测踩坑），
     只移除文字。失败返回 False（调用方回退原图）。"""
     try:
-        with pymupdf.open(file_path) as doc2:
+        with pymupdf.open(src_pdf) as doc2:
             page = doc2[page_num]
             r = pymupdf.Rect(*region)
             page.add_redact_annot(r)
@@ -152,11 +152,12 @@ OVERLAY_VERSION = "v2"
 
 
 async def translate_figure(
-    sidecar_path: str, file_path: str, t_cfg: dict
+    sidecar_path: str, file_path: str | None = None, t_cfg: dict | None = None
 ) -> str | None:
     """生成一张译制图，返回译制图路径；失败返回 None（调用方回退原图）。
 
-    sidecar_path 为 <fig>.json；译制图写在旁边 <fig>.zh<版本>.png。"""
+    sidecar_path 为 <fig>.json；译制图写在旁边 <fig>.zh<版本>.png。
+    file_path 不传时用 sidecar 里记录的源 PDF（按需触发场景）。"""
     try:
         with open(sidecar_path, encoding="utf-8") as f:
             sidecar = json.load(f)
@@ -170,6 +171,12 @@ async def translate_figure(
     page_num = sidecar.get("page")
     if not png or not region or not os.path.isfile(png) or page_num is None:
         return None
+    src_pdf = file_path or sidecar.get("pdf") or ""
+    if not src_pdf or not os.path.isfile(src_pdf):
+        print("[figtranslate] 源 PDF 不可用，无法渲染无字背景")
+        return None
+    if t_cfg is None:
+        t_cfg = {}
 
     zh_png = png[:-4] + f".zh.{OVERLAY_VERSION}.png"
     if os.path.isfile(zh_png):
@@ -216,7 +223,7 @@ async def translate_figure(
     # 2) 无字背景 + 叠字（PIL 渲染是 CPU 密集，放线程）
     def _render() -> str | None:
         bg = os.path.splitext(png)[0] + ".bg.png"
-        if not _render_textless_bg(file_path, page_num, region, bg):
+        if not _render_textless_bg(src_pdf, page_num, region, bg):
             return None
         try:
             _overlay_text(bg, lines, region, zh_png)

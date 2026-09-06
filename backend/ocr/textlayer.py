@@ -201,14 +201,29 @@ def _region_lines(page, region) -> list[dict]:
 def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) -> list[str]:
     """把页面图表区域截图为 PNG，返回可插入 markdown 的图片引用列表（按 y 序）。
 
+    区域分类（2026-09-06 用户决策）：与 find_tables bbox 重叠 >50% 的判为
+    表格，快照命名 tab_*；其余为图，命名 fig_*。表格的译制图改为"全文翻译
+    完成后用户点按触发"（按需，不拖慢全文），sidecar 记录 kind 与源 PDF。
+
     同时落盘 sidecar JSON（<fig>.json：区域坐标 + 图内逐行文字元数据），
-    供翻译阶段生成"译制图"（原排版+译文叠字，2026-09-06 用户需求）。"""
+    供译制图叠字使用。"""
     import json
 
     page = doc[page_num]
+    try:
+        table_boxes = [pymupdf.Rect(t.bbox) for t in page.find_tables().tables]
+    except Exception:
+        table_boxes = []
     refs: list[str] = []
     for k, r in enumerate(_figure_regions(page, debug=debug)):
-        path = os.path.join(image_dir, f"fig_p{page_num + 1:03d}_{k:02d}.png")
+        kind = "figure"
+        for tb in table_boxes:
+            inter = r & tb
+            if not inter.is_empty and inter.get_area() > 0.5 * max(r.get_area(), 1.0):
+                kind = "table"
+                break
+        prefix = "tab" if kind == "table" else "fig"
+        path = os.path.join(image_dir, f"{prefix}_p{page_num + 1:03d}_{k:02d}.png")
         try:
             pix = page.get_pixmap(
                 clip=r, matrix=pymupdf.Matrix(_FIG_SCALE, _FIG_SCALE)
@@ -217,14 +232,16 @@ def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) ->
         except Exception:
             continue  # 单个快照失败不阻断整页
         if debug:
-            print(f"[figure] p{page_num + 1}: 快照#{k} -> {os.path.basename(path)} {r}")
-        # sidecar：译制图的原料（区域 + 图内逐行文字）
+            print(f"[figure] p{page_num + 1}: 快照#{k}({kind}) -> {os.path.basename(path)} {r}")
+        # sidecar：译制图的原料（区域 + 图内逐行文字 + 分类 + 源 PDF）
         try:
             sidecar = {
                 "png": path.replace(os.sep, "/"),
                 "page": page_num,
                 "region": [round(v, 2) for v in list(r)],
                 "lines": _region_lines(page, r),
+                "kind": kind,
+                "pdf": doc.name,
             }
             with open(path + ".json", "w", encoding="utf-8") as f:
                 json.dump(sidecar, f, ensure_ascii=False)

@@ -61,6 +61,43 @@ async def api_asset(path: str):
     return FileResponse(target)
 
 
+@app.post("/api/figure/translate")
+async def api_figure_translate(payload: dict):
+    """按需生成"译制图"（2026-09-06 用户决策：仅表格支持，点按触发）。
+
+    前端在全文翻译完成后，用户点击表格图片触发本接口：
+    传入快照 PNG 的绝对路径，返回译制图 markdown（![Table](zh路径)）。
+    - 仅接受 tab_* 表格快照（kind=table），图不翻译；
+    - 结果落盘缓存（zh 文件存在即直接返回），重复点击幂等；
+    - 路径校验同 /api/asset：仅限 settings.cache_dir 之内。
+    """
+    from ocr.figtranslate import translate_figure
+
+    path = str(payload.get("path") or "")
+    if not path:
+        raise HTTPException(status_code=400, detail="缺少 path")
+    cache_root = os.path.realpath(settings.cache_dir)
+    target = os.path.realpath(path)
+    if os.path.commonpath([target, cache_root]) != cache_root:
+        raise HTTPException(status_code=403, detail="路径超出缓存目录")
+    sidecar_path = target + ".json"
+    if not os.path.isfile(sidecar_path):
+        raise HTTPException(status_code=404, detail="缺少表格元数据（sidecar）")
+    try:
+        import json
+
+        with open(sidecar_path, encoding="utf-8") as f:
+            kind = json.load(f).get("kind")
+    except Exception:
+        kind = None
+    if kind != "table":
+        raise HTTPException(status_code=400, detail="仅支持表格快照的按需翻译")
+    zh = await translate_figure(sidecar_path, None, settings.translate_config)
+    if not zh or not os.path.isfile(zh):
+        raise HTTPException(status_code=500, detail="译制图生成失败")
+    return {"translated": f"![Table]({zh.replace(os.sep, '/')})"}
+
+
 def _make_test_png_b64() -> str:
     """生成 32x32 纯色 PNG 的 base64，用于 OCR 连接测试的最小图片载荷。"""
     size = 32

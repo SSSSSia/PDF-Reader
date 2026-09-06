@@ -85,7 +85,7 @@ def _render_textless_bg(file_path: str, page_num: int, region: list[float], out_
     （图表的柱形/折线/坐标轴都是矢量——默认会被一起删掉，实测踩坑），
     只移除文字。失败返回 False（调用方回退原图）。"""
     try:
-        with pymupdf.open(src_pdf) as doc2:
+        with pymupdf.open(file_path) as doc2:
             page = doc2[page_num]
             r = pymupdf.Rect(*region)
             page.add_redact_annot(r)
@@ -103,12 +103,20 @@ def _render_textless_bg(file_path: str, page_num: int, region: list[float], out_
         return False
 
 
+def _clean_translated(t: str) -> str:
+    """剥掉翻译模型夹带的 markdown 装饰符（### 标题、**加粗、` 代码等）——
+    叠字场景里它们只会变成乱码符号（实测踩坑）。"""
+    t = re.sub(r"^[#\s`>*\-]+", "", t or "")
+    t = t.replace("**", "").replace("`", "").replace("__", "")
+    return t.strip()
+
+
 def _overlay_text(bg_path: str, lines: list[dict], region: list[float], out_path: str) -> None:
     """把译文按原坐标叠到背景图上。bbox 为页面坐标，×倍率映射到像素。"""
     img = Image.open(bg_path).convert("RGB")
     draw = ImageDraw.Draw(img)
     for ln in lines:
-        translated = (ln.get("translated") or "").strip()
+        translated = _clean_translated(ln.get("translated") or "")
         if not translated:
             continue
         x0, y0, x1, y1 = ln["bbox"]

@@ -140,6 +140,10 @@ _PURE_IMAGE = re.compile(r"^\s*!\[[^\]]*\]\([^)]+\)\s*$")
 # 从图片引用中提取本地路径
 _IMG_PATH = re.compile(r"^\s*!\[[^\]]*\]\(([^)]+)\)\s*$")
 
+# 图表"译制图"开关（2026-09-06 用户决策：先取消，图表全部用原图）。
+# figtranslate.py 实现保留，置 True 可重新启用（左右对照=左原图右译图）。
+FIGURE_TRANSLATION_ENABLED = False
+
 
 async def _translate_figure_block(original_md: str, file_path: str, t_cfg: dict) -> str | None:
     """对图表快照块生成译制图。失败返回 None（前端回退显示原图）。"""
@@ -267,28 +271,30 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                     block["translated"] = ""
                     continue
                 if _PURE_IMAGE.match(original):
-                    # 图表块：走"译制图"管线（原排版+图内文字译文的图片）。
-                    # 无 sidecar（旧缓存/纯图形）回退原图。译制图路径入翻译缓存。
-                    # 并发调度（实测教训：串行 await 会让进度卡在 30%——一张
-                    # 200+ 行的图要数分钟，文本块全部被堵在后面）。
+                    # 图表块：译文=原图（图表不做翻译）。
+                    # 译制图功能默认关闭（FIGURE_TRANSLATION_ENABLED），开启时
+                    # 走"译制图"管线并并发调度（串行 await 曾把进度堵在 30%）。
                     block["translated"] = original
-                    key = translate_key(text_hash(original), target_lang, model)
-                    cached = read_cache(settings.cache_dir, key)
-                    if cached and cached.get("translated"):
-                        block["translated"] = cached["translated"]
-                        stats["tr_cache_hit"] += 1
-                        stats["tr_total"] += 1
-                    else:
-                        stats["tr_total"] += 1
-                        fig_jobs.append(
-                            (
-                                block,
-                                key,
-                                asyncio.create_task(
-                                    _translate_figure_block(original, file_path, t_cfg)
-                                ),
+                    if FIGURE_TRANSLATION_ENABLED:
+                        key = translate_key(text_hash(original), target_lang, model)
+                        cached = read_cache(settings.cache_dir, key)
+                        if cached and cached.get("translated"):
+                            block["translated"] = cached["translated"]
+                            stats["tr_cache_hit"] += 1
+                            stats["tr_total"] += 1
+                        else:
+                            stats["tr_total"] += 1
+                            fig_jobs.append(
+                                (
+                                    block,
+                                    key,
+                                    asyncio.create_task(
+                                        _translate_figure_block(
+                                            original, file_path, t_cfg
+                                        )
+                                    ),
+                                )
                             )
-                        )
                     continue
                 key = translate_key(text_hash(original), target_lang, model)
                 cached = read_cache(settings.cache_dir, key)

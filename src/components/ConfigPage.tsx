@@ -9,10 +9,11 @@ import LoadingSpinner from "./common/LoadingSpinner";
 
 /**
  * API 配置页 —— 交互逻辑参照 CadAgent 的 API 管理：
- * 1. 提供商「预设」下拉：选中即自动填充 API 地址 + 模型（Custom 不覆盖）；
+ * 1. 提供商「预设」下拉：选中只填充 API 地址（用户决策 2026-09-06：
+ *    预设不改模型名称，模型始终用户自选；Custom 不覆盖）；
  * 2. 地址 / Key / 模型始终可编辑，Key 带显隐切换；
  * 3. 「测试连接」经本地后端代理发最小请求，内联回显结果；
- * 4. 加载时按 地址+模型 反推预设，匹配不上落「自定义」。
+ * 4. 加载时按 地址 反推预设，匹配不上落「自定义」。
  */
 
 interface Preset {
@@ -22,7 +23,7 @@ interface Preset {
   provider: string;
 }
 
-// 翻译预设（全部为 OpenAI 兼容 /chat/completions 服务，默认模型随各家常用款）
+// 翻译预设（全部为 OpenAI 兼容 /chat/completions 服务；model 仅作占位不再下发）
 const TRANSLATE_PRESETS: Preset[] = [
   { name: "SiliconFlow", url: "https://api.siliconflow.cn/v1", model: "deepseek-ai/DeepSeek-V4-Flash", provider: "openai" },
   { name: "DeepSeek", url: "https://api.deepseek.com/v1", model: "deepseek-chat", provider: "openai" },
@@ -87,18 +88,16 @@ interface ApiSectionProps {
 
 /** 单个 API 区块：预设下拉 + 地址/Key/模型 + 测试连接 */
 function ApiSection({ title, value, presets, onChange, testMode, children }: ApiSectionProps) {
-  // 按 地址+模型 反推预设；匹配不上显示「自定义」
-  const matched = presets.findIndex(
-    (p) => p.url === value.api_url && p.model === value.model
-  );
+  // 只按地址反推预设（用户决策 2026-09-06：预设只改地址，模型独立选择）
+  const matched = presets.findIndex((p) => p.url === value.api_url && p.url);
   const presetIndex = matched >= 0 ? matched : presets.length - 1;
 
   const handlePreset = (idx: number) => {
     const preset = presets[idx];
     if (!preset || preset.name === "自定义") return; // Custom 不覆盖现有值
     onChange("api_url", preset.url);
-    onChange("model", preset.model);
     onChange("provider", preset.provider);
+    // 模型不随预设切换（用户决策：预设只改 API 地址，模型名称保持用户自选）
   };
 
   const [test, setTest] = useState<{

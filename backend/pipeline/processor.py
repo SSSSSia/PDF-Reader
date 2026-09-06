@@ -259,6 +259,7 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
 
         # 先收集所有需要翻译的 block（跳过空白、纯图片与已缓存的）
         pending: list[tuple] = []  # (page, block, cache_key)
+        fig_jobs: list[tuple] = []  # (block, cache_key, Task)——译制图与文本块并发
         for page in pages:
             for block in page["blocks"]:
                 original = (block.get("original") or "").strip()
@@ -268,6 +269,8 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                 if _PURE_IMAGE.match(original):
                     # 图表块：走"译制图"管线（原排版+图内文字译文的图片）。
                     # 无 sidecar（旧缓存/纯图形）回退原图。译制图路径入翻译缓存。
+                    # 并发调度（实测教训：串行 await 会让进度卡在 30%——一张
+                    # 200+ 行的图要数分钟，文本块全部被堵在后面）。
                     block["translated"] = original
                     key = translate_key(text_hash(original), target_lang, model)
                     cached = read_cache(settings.cache_dir, key)
@@ -277,12 +280,15 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                         stats["tr_total"] += 1
                     else:
                         stats["tr_total"] += 1
-                        fig_img = await _translate_figure_block(
-                            original, file_path, t_cfg
+                        fig_jobs.append(
+                            (
+                                block,
+                                key,
+                                asyncio.create_task(
+                                    _translate_figure_block(original, file_path, t_cfg)
+                                ),
+                            )
                         )
-                        if fig_img:
-                            block["translated"] = fig_img
-                            write_cache(settings.cache_dir, key, {"translated": fig_img})
                     continue
                 key = translate_key(text_hash(original), target_lang, model)
                 cached = read_cache(settings.cache_dir, key)
@@ -342,6 +348,20 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         except Exception:
             # 单个 chunk 失败不应让整本书前功尽弃：已完成的保留，失败的留空
             pass
+
+        # 译制图任务收尾：与文本翻译并发执行，文本翻完这里等它们落盘。
+        # 任何一个失败只影响那一张图（block 停留在回退原图），不阻断。
+        if fig_jobs:
+            print(f"[figure] 等待 {len(fig_jobs)} 张译制图生成…")
+            fig_outs = await asyncio.gather(
+                *[t for _, _, t in fig_jobs], return_exceptions=True
+            )
+            for (block, key), out in zip(fig_jobs, fig_outs):
+                if isinstance(out, str) and out:
+                    block["translated"] = out
+                    write_cache(settings.cache_dir, key, {"translated": out})
+                elif isinstance(out, Exception):
+                    print(f"[figure] 译制图任务失败（回退原图）: {out}")
 
         job["pages"] = pages
         job["status"] = "done"

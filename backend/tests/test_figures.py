@@ -52,13 +52,17 @@ def test_figure_inserted_above_caption():
     assert 0 <= m_img < m_cap, "图片引用应位于 Figure 2 caption 之前"
 
 
-def test_table_page_not_snapshotted():
-    """page7（1-based）的表格被 find_tables 命中，不应产生图快照。"""
+def test_table_page_snapshotted_as_figure():
+    """表格也按快照处理（2026-09-06 用户决策：文本表格转 markdown 必错位）：
+    page7（1-based）的两个表格应各产生一个快照（该样张表格无表注，
+    快照按页尾追加兜底）。断言须在临时目录存活期内完成。"""
     with tempfile.TemporaryDirectory() as d:
         pages = extract_pages(_PDF, page_nums=[6], image_dir=d)
-    for md in pages:
-        refs = _IMG_REF.findall(md or "")
-        assert refs == [], f"表格页不应有快照引用，实际 {refs}"
+        md = pages[0] or ""
+        refs = _IMG_REF.findall(md)
+        assert len(refs) >= 2, f"两个表格应产生至少 2 个快照引用，实际 {len(refs)}"
+        for p in refs:
+            assert os.path.isfile(p), f"快照文件不存在: {p}"
 
 
 def test_page_number_noise_filtered():

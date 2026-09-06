@@ -27,23 +27,22 @@ _SUB_TAG = re.compile(r"<sub>(.*?)</sub>", re.IGNORECASE | re.DOTALL)
 _SUP_MAP = str.maketrans("0123456789+-=()ni", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ")
 _SUB_MAP = str.maketrans("0123456789+-=()n", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₙ")
 
-# caption 行锚点（图快照插回 markdown 的定位依据）——只锚「图」注，
-# 表格走 find_tables 排除不做快照，Table/表 caption 不应占用锚位
+# caption 行锚点（图/表快照插回 markdown 的定位依据）。
+# 表格也走快照（2026-09-06 用户决策：文本表格转 markdown 必错位，
+# 统一按图片处理），所以 Table/表 注同样是有效锚点
 _FIG_CAPTION = re.compile(
-    r"^\s*(?:Figure|Fig\.?|图)\s*\d+", re.IGNORECASE | re.MULTILINE
+    r"^\s*(?:Figure|Fig\.?|Table|Table\.?|图|表)\s*\d+", re.IGNORECASE | re.MULTILINE
 )
-# 单行图注匹配（redact 时豁免图注文本块用）
+# 单行图/表注匹配（redact 时豁免注文本块用）
 _FIG_CAPTION_LINE = re.compile(
-    r"^\s*(?:Figure|Fig\.?|图)\s*\d+", re.IGNORECASE
+    r"^\s*(?:Figure|Fig\.?|Table|Table\.?|图|表)\s*\d+", re.IGNORECASE
 )
 # 图表区域判定阈值
 _MIN_FIG_RATIO = 0.015     # 面积占页面比例下限（过滤图标/装饰线；
                            # 0.03 实测会漏小图片表格——A4 上 150x80pt 的表约 2.5%）
 _MAX_FIG_RATIO = 0.92      # 上限（过滤整页背景）
 _MAX_FIG_TEXT_CHARS = 2000 # 区域内文本字符上限（兜底：防整页文本框误判；
-                           # 矢量图表的轴标签/图例是真实文本，实测可达 1500+，
-                           # 表格由 find_tables 精确排除，不靠文本数启发式）
-_TABLE_OVERLAP = 0.3       # 与表格 bbox 重叠面积占比超过该值则排除
+                           # 矢量图表的轴标签/图例是真实文本，实测可达 1500+）
 _FIG_SCALE = 2.5           # 快照渲染倍率（与视觉 OCR 一致）
 
 
@@ -83,12 +82,13 @@ def _merge_rects(rects: list) -> list:
 
 
 def _figure_regions(page, debug: bool = False) -> list:
-    """检测页面的图表区域（栅格图 + 矢量绘图簇统一处理）。
+    """检测页面的图/表区域（栅格图 + 矢量绘图簇 + 表格统一处理）。
+
+    表格也按图片快照（2026-09-06 用户决策：文本表格转 markdown 必错位；
+    find_tables 的 bbox 直接作为候选区域，borderless/booktabs 表也能命中）。
 
     过滤规则：
     - 面积占比 [_MIN_FIG_RATIO, _MAX_FIG_RATIO]；
-    - 与 find_tables 表格 bbox 重叠超 _TABLE_OVERLAP 的区域排除（表格
-      不做快照——文本层已能完整提取表格内容，截图反而无法翻译）；
     - 区域内部文本超 _MAX_FIG_TEXT_CHARS 兜底排除（防整页文本框误判；
       注意矢量图表轴标签是真实文本，正常图表可达 1500+ 字符）。
     返回按 y0 排序的 Rect 列表。debug=True 时打印各环节计数与跳过原因。"""
@@ -103,17 +103,16 @@ def _figure_regions(page, debug: bool = False) -> list:
         rects.extend(page.cluster_drawings())
     except Exception:
         pass
-    # 表格 bbox（一次检测，供重叠排除；失败不阻断）
-    table_boxes: list = []
+    # 表格 bbox 直接作为候选（一次检测；失败不阻断）
     try:
-        table_boxes = [t.bbox for t in page.find_tables().tables]
+        rects.extend(pymupdf.Rect(t.bbox) for t in page.find_tables().tables)
     except Exception:
         pass
     merged = _merge_rects(rects)
     if debug:
         print(
-            f"[figure] p{page.number + 1}: 栅格rect={len(rects) - 0} "
-            f"矢量簇候选={len(merged)} 表格bbox={len(table_boxes)}"
+            f"[figure] p{page.number + 1}: 候选rect={len(rects)} "
+            f"合并后={len(merged)}"
         )
     figs = []
     for r in merged:
@@ -124,16 +123,6 @@ def _figure_regions(page, debug: bool = False) -> list:
         if ratio < _MIN_FIG_RATIO or ratio > _MAX_FIG_RATIO:
             if debug:
                 print(f"[figure] p{page.number + 1}: 跳过(面积比{ratio:.3f}) {r}")
-            continue
-        skip = False
-        for tb in table_boxes:
-            inter = r & pymupdf.Rect(tb)
-            if not inter.is_empty and inter.get_area() > _TABLE_OVERLAP * r.get_area():
-                skip = True  # 主体是表格，不快照
-                break
-        if skip:
-            if debug:
-                print(f"[figure] p{page.number + 1}: 跳过(表格重叠) {r}")
             continue
         try:
             text_chars = len(page.get_text("text", clip=r).strip())
@@ -306,6 +295,10 @@ def extract_pages(
     """
     doc = pymupdf.open(file_path)
     try:
+        # 规整为真实长路径：调用方传入 8.3 短路径（如 TEMP 目录的 ADMINI~1）
+        # 时，生成的引用在部分系统上无法解析（实测踩坑）
+        if image_dir:
+            image_dir = os.path.realpath(image_dir)
         out: list[str | None] = []
         for idx, pno in enumerate(page_nums):
             # 1) 先在原文档上快照（渲染含图内文字，所见即所得）

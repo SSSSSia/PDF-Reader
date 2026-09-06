@@ -140,14 +140,30 @@ def _clean_translated(t: str) -> str:
 
 # 表格渲染参数（像素；2x 于页面渲染，观感与快照一致）
 _TABLE_FONT_PX = 20
-_TABLE_LINE_H = 28  # 行高（含行距）
-_TABLE_PAD_X, _TABLE_PAD_Y = 10, 7
+_TABLE_LINE_H = 24  # 行高（含行距）
+_TABLE_PAD_X, _TABLE_PAD_Y = 10, 6
 _TABLE_MIN_COL_W = 56  # 单列最小宽
-_TABLE_MAX_COL_W = 430  # 单列最大宽（超出折行）
+_TABLE_MAX_COL_W = 560  # 单列最大宽（超出折行）
 _TABLE_GAP = 20  # 同一快照区域内多张表之间的间距
 _GRID_COLOR = (148, 163, 184)  # 网格线 slate-400
 _HEADER_BG = (241, 245, 249)  # 表头底色 slate-100
 _TEXT_COLOR = (15, 23, 42)  # 正文 slate-900
+
+# 常用表头词表：单词表头被标识符规则跳过（不会发给模型），
+# 命中词表直接本地翻译（Organization/Organization 之类无需消耗 API）
+_GLOSSARY = {
+    "method": "方法",
+    "organization": "组织方式",
+    "description": "描述",
+    "accuracy": "准确率",
+    "average": "平均",
+    "dataset": "数据集",
+    "question type": "问题类型",
+    "type": "类型",
+    "category": "类别",
+    "cost": "成本",
+    "total": "总计",
+}
 
 # 表格单元格专用提示：通用翻译提示下，Qwen3 对短术语常原样返回
 # （实测 "Multi-choice" → "Multi-choice"，2026-09-06 踩坑）
@@ -169,10 +185,12 @@ def _region_tables(src_pdf: str, page_num: int, region: list[float]) -> list[lis
     不用 find_tables：实测这类表格线不全，它会把整个数据区并成一个
     大单元格（方法名/数字全部挤在一列，2026-09-06 用户截图踩坑）。
     改用"表格列垂直对齐"特性：
-    1. 词按 y 中心聚类成视觉行；
-    2. 行内按词间隙（> _COL_GAP_MIN）切列；
-    3. 行间距显著变大处切分为多张表；
-    4. 丢弃混进区域的段落/图注行（单格且超长）。"""
+    1. 词按 y 中心聚类成视觉行，行内按词间隙切段（记录每段 x 范围）；
+    2. 切段间隙的 x 位置跨行聚类出全局列边界（≥2 行出现的间隙才算）；
+    3. 每段按 x 中心归位到列——单元格内折行不会串列；
+    4. 首列为空的视觉行是上一行单元格的折行续行，并入上一行
+       （实测续行不合并会把多行单元格拆成错位的多个行，2026-09-06 用户截图踩坑）；
+    5. 丢弃混进区域的段落/图注行（单格超长）；行间距显著变大处切分为多张表。"""
     try:
         with pymupdf.open(src_pdf) as doc2:
             page = doc2[page_num]
@@ -192,31 +210,62 @@ def _region_tables(src_pdf: str, page_num: int, region: list[float]) -> list[lis
                     vlines[-1][1].append(w)
                 else:
                     vlines.append((yc, [w]))
-            # 2) 行内按间隙切列
-            combined: list[tuple[float, list[str]]] = []
+            # 2) 行内按间隙切段，记录每段 x 范围
+            seg_lines: list[tuple[float, list[tuple[float, float, str]]]] = []
             for yc, ws in vlines:
                 ws.sort(key=lambda w: w[0])
-                cells, cur = [], [ws[0]]
+                segs, cur = [], [ws[0]]
                 for a, b in zip(ws, ws[1:]):
                     if b[0] - a[2] > _COL_GAP_MIN:
-                        cells.append(cur)
+                        segs.append(cur)
                         cur = [b]
                     else:
                         cur.append(b)
-                cells.append(cur)
-                combined.append((yc, [" ".join(x[4] for x in c) for c in cells]))
-            # 4) 丢弃混入的段落/图注行（单格超长；表头跨列行如 Accuracy 很短不受影响）
-            combined = [(y, rw) for y, rw in combined
-                        if not (len(rw) == 1 and len(rw[0]) > 60)]
-            if not combined:
+                segs.append(cur)
+                seg_lines.append(
+                    (yc, [(s[0][0], s[-1][2], " ".join(w[4] for w in s)) for s in segs])
+                )
+            # 3) 取段数最多的视觉行作为列定义行（通常即表头/最宽行），
+            #    列边界 = 其相邻段的中点；其余行的段按 x 中心归位。
+            #    不用跨行聚类间隙中点：中点随左列文字长度浮动，
+            #    同一列边界会被拆成多簇（实测多出空列，2026-09-06 踩坑）
+            ref = max(seg_lines, key=lambda t: len(t[1]))[1]
+            ncol = len(ref)
+            bounds = [(ref[i][1] + ref[i + 1][0]) / 2 for i in range(ncol - 1)]
+
+            def _to_row(segs: list[tuple[float, float, str]]) -> list[str]:
+                row = [""] * ncol
+                for x0, x1, txt in segs:
+                    ci = min(sum(1 for b in bounds if (x0 + x1) / 2 > b), ncol - 1)
+                    row[ci] = (row[ci] + " " + txt).strip()
+                return row
+
+            # 5a) 丢弃混入的段落/图注行（仅一格有内容且超长；表头跨列行较短不受影响）
+            rows = [(yc, _to_row(segs)) for yc, segs in seg_lines]
+            rows = [
+                (y, rw)
+                for y, rw in rows
+                if not (sum(1 for c in rw if c) == 1 and max(map(len, rw)) > 60)
+            ]
+            if not rows:
                 return []
-            # 3) 行间距显著变大处切分为多张表
-            gaps = [b[0] - a[0] for a, b in zip(combined, combined[1:])]
+            # 4) 续行合并：首列无内容的视觉行并入上一行
+            merged: list[tuple[float, list[str]]] = []
+            for y, rw in rows:
+                if merged and not rw[0] and any(rw[1:]):
+                    prev = merged[-1][1]
+                    for ci in range(1, ncol):
+                        if rw[ci]:
+                            prev[ci] = (prev[ci] + " " + rw[ci]).strip()
+                    continue
+                merged.append((y, list(rw)))
+            # 5b) 行间距显著变大处切分为多张表
+            gaps = [b[0] - a[0] for a, b in zip(merged, merged[1:])]
             med = sorted(gaps)[len(gaps) // 2] if gaps else 0.0
             thr = max(med * 2.5, 15.0)
             blocks: list[list[list[str]]] = []
-            cur_block = [combined[0][1]]
-            for (ya, ra), (yb, rb) in zip(combined, combined[1:]):
+            cur_block: list[list[str]] = [merged[0][1]]
+            for (ya, ra), (yb, rb) in zip(merged, merged[1:]):
                 if yb - ya > thr:
                     blocks.append(cur_block)
                     cur_block = []
@@ -242,11 +291,17 @@ async def _translate_cells(
     会诱发模型幻觉——给 "Retrieval operators" 返回两千字的跑题示例
     （2026-09-06 用户截图踩坑）。并发单发既快又稳。"""
     global _last_error
+    is_zh = target_lang.lower().startswith("zh")
     uniq: dict[str, str] = {}
     for rows in tables:
         for row in rows:
             for c in row:
-                if c and _needs_translation(c, target_lang):
+                # 词表命中的单词表头即使被标识符规则跳过也收进来，
+                # 这样下方词表回填才能覆盖到它（如 Organization/Average）
+                if c and (
+                    _needs_translation(c, target_lang)
+                    or (is_zh and c.strip().lower() in _GLOSSARY)
+                ):
                     uniq.setdefault(c, c)
     items = list(uniq)
 
@@ -265,6 +320,11 @@ async def _translate_cells(
         # 译文为空或长度异常（模型幻觉跑题的典型特征）→ 保留原文。
         # 上限放宽到 8 倍：模型习惯"译文（附原文）"，正常译文也不短
         uniq[k] = o if o and len(o) <= max(8 * len(k) + 40, 120) else k
+        # 单词表头（Organization/Average 等）模型可能原样返回 → 查词表
+        if is_zh and uniq[k] == k:
+            g = _GLOSSARY.get(k.strip().lower())
+            if g:
+                uniq[k] = g
     for rows in tables:
         for ri, row in enumerate(rows):
             rows[ri] = [uniq.get(c, c) for c in row]
@@ -405,7 +465,8 @@ def _overlay_text(bg_path: str, lines: list[dict], region: list[float], out_path
 
 # 译制图版本号：改动生成逻辑时 +1，使旧译制图自动失效重生成
 # v3：表格改结构化重建（叠字方案对表格不可读，2026-09-06 用户反馈）
-OVERLAY_VERSION = "v3"
+# v4：列边界跨行聚类 + 续行合并（多行单元格错位，2026-09-06 用户截图）
+OVERLAY_VERSION = "v4"
 
 
 async def translate_figure(

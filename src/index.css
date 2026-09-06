@@ -35,6 +35,14 @@
     outline-offset: 2px;
   }
 
+  /* 论文阅读排版（用户反馈"要有 PDF 论文的质感"，2026-09-06）：
+     衬线字体栈——英文 Georgia/Times，中文落到宋体系，模拟论文正文字形；
+     配合 text-justify 两端对齐，观感接近 PDF 原版面。 */
+  .paper-font {
+    font-family: Georgia, "Times New Roman", "Source Han Serif SC",
+      "Noto Serif SC", "STZhongsong", SimSun, serif;
+  }
+
   /* 尊重系统"减少动态效果"设置 */
   @media (prefers-reduced-motion: reduce) {
     *,

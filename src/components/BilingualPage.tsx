@@ -14,6 +14,9 @@ export default function BilingualPage() {
   const { pages, isLoading, progress, error } = usePdfStore();
   const blocks = pages.flatMap((p) => p.blocks);
 
+  // 纯图片块（图表快照）：后端已令译文=原文，前端整行居中渲染一次
+  const isPureImage = (t: string) => /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(t);
+
   if (blocks.length === 0) {
     return (
       <div className="py-20 text-center">
@@ -77,26 +80,36 @@ export default function BilingualPage() {
             </div>
           </div>
 
-          {blocks.map((b) => (
-            <div
-              key={`${b.page}-${b.block_id}`}
-              className="grid grid-cols-2 gap-x-8 border-b border-dashed border-slate-200 dark:border-slate-700"
-              style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" }}
-            >
-              <div className="py-3 pr-2 text-slate-900 dark:text-slate-100">
+          {blocks.map((b) =>
+            isPureImage(b.original) ? (
+              <div
+                key={`${b.page}-${b.block_id}`}
+                className="border-b border-dashed border-slate-200 py-4 dark:border-slate-700"
+                style={{ contentVisibility: "auto", containIntrinsicSize: "auto 220px" }}
+              >
                 <MarkdownText text={b.original} />
               </div>
-              <div className="border-l border-slate-200 py-3 pl-2 text-blue-900 dark:border-slate-700 dark:text-blue-100">
-                {b.translated ? (
-                  <MarkdownText text={b.translated} />
-                ) : (
-                  <span className="italic text-slate-400 dark:text-slate-500">
-                    待翻译…
-                  </span>
-                )}
+            ) : (
+              <div
+                key={`${b.page}-${b.block_id}`}
+                className="grid grid-cols-2 gap-x-8 border-b border-dashed border-slate-200 dark:border-slate-700"
+                style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" }}
+              >
+                <div className="paper-font py-3 pr-2 text-justify text-slate-900 dark:text-slate-100">
+                  <MarkdownText text={b.original} />
+                </div>
+                <div className="paper-font border-l border-slate-200 py-3 pl-2 text-justify text-blue-900 dark:border-slate-700 dark:text-blue-100">
+                  {b.translated ? (
+                    <MarkdownText text={b.translated} />
+                  ) : (
+                    <span className="italic text-slate-400 dark:text-slate-500">
+                      待翻译…
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            ),
+          )}
 
           <div className="h-16" aria-hidden="true" />
         </div>

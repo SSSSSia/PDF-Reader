@@ -125,7 +125,11 @@ export function convertFileSrc(filePath: string): string {
 /** 本地资源（论文插图等）→ 可访问 URL；非本地路径原样返回 */
 export function assetUrl(src: string): string {
   if (/^[a-zA-Z]:[\\/]/.test(src) || src.startsWith("/")) {
-    return convertFileSrc(src);
+    // 浏览器模式（开发/人工验收）无法用 Tauri asset 协议，改走后端静态端点
+    if (!isTauri()) {
+      return `${API_BASE}/api/asset?path=${encodeURIComponent(src)}`;
+    }
+    return tauriConvertFileSrc(src);
   }
   return src;
 }

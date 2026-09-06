@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import os
+import re
 import sys
 import time
 from typing import Optional
@@ -26,7 +27,8 @@ MAX_CONCURRENCY = 8
 
 # 文本层提取结果在 OCR 缓存中的伪模型名（与视觉模型缓存隔离）。
 # v2：提取内容增加 HTML 清理（<br>/<sup>/注释），旧缓存含脏数据需失效。
-TEXT_LAYER_MODEL = "text-layer-v2"
+# v3：图片策略改为图表区域快照（矢量图/碎栅格统一截图插回），markdown 内容变化。
+TEXT_LAYER_MODEL = "text-layer-v3"
 
 
 def _single_block(page: int, text: str) -> dict:
@@ -127,6 +129,11 @@ def _split_page(page: dict) -> dict:
     return {"page": page["page"], "blocks": blocks}
 
 
+# 纯图片块（图表快照插入产生的 ![Figure](path)）：
+# 不送翻译（模型只会胡编图注），译文直接复制原文，前端整行居中渲染
+_PURE_IMAGE = re.compile(r"^\s*!\[[^\]]*\]\([^)]+\)\s*$")
+
+
 async def _load_or_run_ocr(file_path: str, pdf_hash: str, config: dict, job: dict) -> list:
     """混合 OCR（修复"内容不全"）+ 页级流式挂载（阶段1-T5）：
 
@@ -218,13 +225,17 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         source_lang = t_cfg.get("source_language", "zh")
         model = t_cfg.get("model", "")
 
-        # 先收集所有需要翻译的 block（跳过空白与已缓存的）
+        # 先收集所有需要翻译的 block（跳过空白、纯图片与已缓存的）
         pending: list[tuple] = []  # (page, block, cache_key)
         for page in pages:
             for block in page["blocks"]:
                 original = (block.get("original") or "").strip()
                 if not original:
                     block["translated"] = ""
+                    continue
+                if _PURE_IMAGE.match(original):
+                    # 图表快照块：不翻译，译文=原文（前端整行居中展示）
+                    block["translated"] = original
                     continue
                 key = translate_key(text_hash(original), target_lang, model)
                 cached = read_cache(settings.cache_dir, key)

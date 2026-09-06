@@ -8,6 +8,9 @@ import ReaderToolbar from "./ReaderToolbar";
  * 原文段落在上，译文紧贴其下，段落间虚线分隔，图片/表格按原文档顺序穿插。
  * content-visibility:auto 保证长文档滚动性能。
  */
+/** 纯图片块（markdown 图片引用），不与译文配对，整块原样展示 */
+const isPureImage = (t: string) => /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(t);
+
 export default function InlinePage() {
   const { pages, isLoading, progress, error } = usePdfStore();
   const blocks = pages.flatMap((p) => p.blocks);
@@ -72,13 +75,27 @@ export default function InlinePage() {
               className="mb-5"
               style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" }}
             >
-              <div className="text-slate-900 dark:text-slate-100">
-                <MarkdownText text={b.original} />
-              </div>
-              {b.translated && (
-                <div className="mt-1.5 border-b border-dashed border-slate-300 pb-2 text-slate-600 dark:border-slate-600 dark:text-slate-300">
-                  <MarkdownText text={b.translated} />
-                </div>
+              {isPureImage(b.original) ? (
+                /* 图表块：整块居中，原样呈现，不与译文配对 */
+                <figure className="my-6 flex flex-col items-center">
+                  <MarkdownText text={b.original} />
+                  {b.translated && b.translated !== b.original && (
+                    <figcaption className="mt-2 text-center text-sm text-slate-500 dark:text-slate-400 paper-font">
+                      <MarkdownText text={b.translated} />
+                    </figcaption>
+                  )}
+                </figure>
+              ) : (
+                <>
+                  <div className="text-slate-900 dark:text-slate-100 paper-font text-justify">
+                    <MarkdownText text={b.original} />
+                  </div>
+                  {b.translated && (
+                    <div className="mt-1.5 border-b border-dashed border-slate-300 pb-2 text-slate-600 dark:border-slate-600 dark:text-slate-300 paper-font text-justify">
+                      <MarkdownText text={b.translated} />
+                    </div>
+                  )}
+                </>
               )}
             </div>
           ))}

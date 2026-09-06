@@ -27,6 +27,20 @@ _SUB_TAG = re.compile(r"<sub>(.*?)</sub>", re.IGNORECASE | re.DOTALL)
 _SUP_MAP = str.maketrans("0123456789+-=()ni", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ")
 _SUB_MAP = str.maketrans("0123456789+-=()n", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₙ")
 
+# caption 行锚点（图快照插回 markdown 的定位依据）——只锚「图」注，
+# 表格走 find_tables 排除不做快照，Table/表 caption 不应占用锚位
+_FIG_CAPTION = re.compile(
+    r"^\s*(?:Figure|Fig\.?|图)\s*\d+", re.IGNORECASE | re.MULTILINE
+)
+# 图表区域判定阈值
+_MIN_FIG_RATIO = 0.03      # 面积占页面比例下限（过滤图标/装饰线）
+_MAX_FIG_RATIO = 0.92      # 上限（过滤整页背景）
+_MAX_FIG_TEXT_CHARS = 2000 # 区域内文本字符上限（兜底：防整页文本框误判；
+                           # 矢量图表的轴标签/图例是真实文本，实测可达 1500+，
+                           # 表格由 find_tables 精确排除，不靠文本数启发式）
+_TABLE_OVERLAP = 0.3       # 与表格 bbox 重叠面积占比超过该值则排除
+_FIG_SCALE = 2.5           # 快照渲染倍率（与视觉 OCR 一致）
+
 
 def _clean_html(md: str) -> str:
     """数据清理（实测问题：正文中残留 <br>/<sup> 等 HTML 杂质，
@@ -40,6 +54,118 @@ def _clean_html(md: str) -> str:
     md = _SUP_TAG.sub(lambda m: m.group(1).translate(_SUP_MAP), md)
     md = _SUB_TAG.sub(lambda m: m.group(1).translate(_SUB_MAP), md)
     md = md.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    return md
+
+
+def _merge_rects(rects: list) -> list:
+    """合并相交矩形（迭代至稳定）。区域数量少，O(n²) 可接受。"""
+    rects = [pymupdf.Rect(r) for r in rects if r and r.width > 1 and r.height > 1]
+    changed = True
+    while changed:
+        changed = False
+        out: list = []
+        while rects:
+            r = rects.pop()
+            for i, o in enumerate(out):
+                if r.intersects(o):
+                    out[i] = o | r  # 并集
+                    changed = True
+                    break
+            else:
+                out.append(r)
+        rects = out
+    return rects
+
+
+def _figure_regions(page) -> list:
+    """检测页面的图表区域（栅格图 + 矢量绘图簇统一处理）。
+
+    过滤规则：
+    - 面积占比 [_MIN_FIG_RATIO, _MAX_FIG_RATIO]；
+    - 与 find_tables 表格 bbox 重叠超 _TABLE_OVERLAP 的区域排除（表格
+      不做快照——文本层已能完整提取表格内容，截图反而无法翻译）；
+    - 区域内部文本超 _MAX_FIG_TEXT_CHARS 兜底排除（防整页文本框误判；
+      注意矢量图表轴标签是真实文本，正常图表可达 1500+ 字符）。
+    返回按 y0 排序的 Rect 列表。"""
+    page_area = page.rect.width * page.rect.height
+    rects: list = []
+    try:
+        for img in page.get_images(full=True):
+            rects.extend(page.get_image_rects(img[0]))
+    except Exception:
+        pass
+    try:
+        rects.extend(page.cluster_drawings())
+    except Exception:
+        pass
+    # 表格 bbox（一次检测，供重叠排除；失败不阻断）
+    table_boxes: list = []
+    try:
+        table_boxes = [t.bbox for t in page.find_tables().tables]
+    except Exception:
+        pass
+    merged = _merge_rects(rects)
+    figs = []
+    for r in merged:
+        r = r & page.rect  # 裁剪到页面内
+        if r.is_empty:
+            continue
+        ratio = r.width * r.height / page_area
+        if ratio < _MIN_FIG_RATIO or ratio > _MAX_FIG_RATIO:
+            continue
+        skip = False
+        for tb in table_boxes:
+            inter = r & pymupdf.Rect(tb)
+            if not inter.is_empty and inter.get_area() > _TABLE_OVERLAP * r.get_area():
+                skip = True  # 主体是表格，不快照
+                break
+        if skip:
+            continue
+        try:
+            text_chars = len(page.get_text("text", clip=r).strip())
+        except Exception:
+            text_chars = 0
+        if text_chars > _MAX_FIG_TEXT_CHARS:
+            continue  # 文本过密（整页文本框），兜底排除
+        figs.append(r)
+    figs.sort(key=lambda r: (r.y0, r.x0))
+    return figs
+
+
+def _snapshot_figures(doc, page_num: int, image_dir: str) -> list[str]:
+    """把页面图表区域截图为 PNG，返回可插入 markdown 的图片引用列表（按 y 序）。"""
+    page = doc[page_num]
+    refs: list[str] = []
+    for k, r in enumerate(_figure_regions(page)):
+        path = os.path.join(image_dir, f"fig_p{page_num + 1:03d}_{k:02d}.png")
+        try:
+            pix = page.get_pixmap(
+                clip=r, matrix=pymupdf.Matrix(_FIG_SCALE, _FIG_SCALE)
+            )
+            pix.save(path)
+        except Exception:
+            continue  # 单个快照失败不阻断整页
+        refs.append(f"![Figure]({path.replace(os.sep, '/')})")
+    return refs
+
+
+def _insert_figures(md: str, refs: list[str]) -> str:
+    """把图快照引用插回 markdown（caption 锚定，v1 启发式）：
+
+    学术惯例 caption 紧跟图的下方——第 k 个快照（按页面 y 序）插到
+    markdown 中第 k 个 caption 行之前，即「图在上、caption 在下」。
+    caption 数不足时，多余快照追加到页末。"""
+    if not refs:
+        return md
+    marks = [m.start() for m in _FIG_CAPTION.finditer(md)]
+    # 从后往前插，避免位移
+    for k in range(len(refs) - 1, -1, -1):
+        ref = f"\n\n{refs[k]}\n\n"
+        if k < len(marks):
+            pos = marks[k]
+            md = md[:pos] + ref + md[pos:]
+        else:
+            md = md.rstrip("\n") + "\n\n" + refs[k] + "\n"
     return md
 
 
@@ -72,26 +198,26 @@ def extract_pages(
     """提取指定页的文本层 Markdown（页级流式提取的基础，阶段1-T5）。
 
     page_nums 按序提取，返回等长列表；无有效文本层的页为 None。
-    pymupdf4llm 的图片文件名含页号（{doc}-{page:04d}-{idx:02d}），
-    逐页/分页调用不会互相覆盖。单页提取约 0.5s（表格检测为主），
-    上层逐页调用即可实现「首页秒开、后续页渐进出现」。
+    图片策略（用户反馈"图片原模原样显示"，2026-09-06）：
+    - 不再使用 pymupdf4llm 的 write_images（栅格图常被拆成几十张碎片）；
+    - 统一走 _snapshot_figures：检测「栅格图区域 + 矢量绘图簇」（合并、
+      面积/文本密度过滤），高清截图后按 caption 锚定插回 markdown——
+      矢量图表（LaTeX/绘图导出）也能原样显示。
+    单页提取约 0.5s（表格检测为主），上层逐页调用实现首页秒开。
     """
     doc = pymupdf.open(file_path)
     try:
-        kwargs: dict = {"page_chunks": True, "pages": page_nums}
-        if image_dir:
-            os.makedirs(image_dir, exist_ok=True)
-            kwargs.update(
-                write_images=True, image_path=image_dir, image_format="png"
-            )
-        chunks = pymupdf4llm.to_markdown(doc, **kwargs)
+        chunks = pymupdf4llm.to_markdown(doc, page_chunks=True, pages=page_nums)
         out: list[str | None] = []
-        for c in chunks:
+        for idx, c in enumerate(chunks):
             md = (c.get("text") or "").strip()
             if md:
                 md = _clean_html(md)
                 if image_dir:
                     md = _normalize_image_refs(md, image_dir)
+                    md = _insert_figures(
+                        md, _snapshot_figures(doc, page_nums[idx], image_dir)
+                    )
             out.append(md if len(md) >= MIN_TEXT_CHARS else None)
         return out
     finally:

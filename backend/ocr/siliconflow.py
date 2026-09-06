@@ -124,8 +124,18 @@ async def _ocr_image(img_bytes: bytes, api_url: str, api_key: str, model: str) -
 # 按空行切段，一段一块。不做句级切分——句级切分会把连贯论述拆成
 # 一句一句的碎片（实测反馈"排版都是一句一句的"），且打断表格/标题结构。
 # 切块发生在 OCR 缓存读取之后，因此改切块策略不影响缓存命中。
+
+# 页脚噪音（用户反馈"页码被翻译"，2026-09-06）：纯页码/罗马页码/Page N of N
+_NOISE_BLOCK = re.compile(
+    r"^(?:\d{1,4}|[ivxlcdm]{1,8}|page\s*\d+(?:\s*(?:of|/)\s*\d+)?)$",
+    re.IGNORECASE,
+)
+
+
 def split_into_blocks(text: str) -> list[str]:
     text = (text or "").strip()
     if not text:
         return []
-    return [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    blocks = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    # 过滤页码/页脚噪音块（去空格后匹配，兼容 "1 2" 之类异常排版）
+    return [b for b in blocks if not _NOISE_BLOCK.match(re.sub(r"\s+", "", b))]

@@ -45,6 +45,22 @@ async def api_reload_config():
     return {"status": "ok", "changed": changed}
 
 
+@app.get("/api/asset")
+async def api_asset(path: str):
+    """按绝对路径返回缓存目录内的图片文件（浏览器模式渲染论文插图用）。
+
+    安全约束：仅允许 settings.cache_dir 之下的文件，防止任意文件读取。
+    Tauri 模式走 convertFileSrc 不经过此端点。
+    """
+    cache_root = os.path.realpath(settings.cache_dir)
+    target = os.path.realpath(path)
+    if os.path.commonpath([target, cache_root]) != cache_root:
+        raise HTTPException(status_code=403, detail="路径超出缓存目录")
+    if not os.path.isfile(target):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(target)
+
+
 def _make_test_png_b64() -> str:
     """生成 32x32 纯色 PNG 的 base64，用于 OCR 连接测试的最小图片载荷。"""
     size = 32

@@ -30,6 +30,10 @@ MAX_CONCURRENCY = 8
 # v3：图片策略改为图表区域快照（矢量图/碎栅格统一截图插回），markdown 内容变化。
 TEXT_LAYER_MODEL = "text-layer-v3"
 
+# 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
+# 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。
+VISION_CACHE_SUFFIX = "@v2"
+
 
 def _single_block(page: int, text: str) -> dict:
     return {
@@ -176,7 +180,9 @@ async def _load_or_run_ocr(file_path: str, pdf_hash: str, config: dict, job: dic
                 )
                 pages[i] = {"page": i, "blocks": blocks}
             else:  # 无文本层 → 视觉路线（先查缓存，未命中挂占位保持页序）
-                vcached = read_cache(cache_dir, ocr_key(pdf_hash, i, vision_model))
+                vcached = read_cache(
+                    cache_dir, ocr_key(pdf_hash, i, vision_model + VISION_CACHE_SUFFIX)
+                )
                 if vcached and vcached.get("blocks"):
                     pages[i] = {"page": i, "blocks": vcached["blocks"]}
                     job["stats"]["ocr_cache_hit"] += 1
@@ -186,15 +192,18 @@ async def _load_or_run_ocr(file_path: str, pdf_hash: str, config: dict, job: dic
         job_pages.append(pages[i])
         job["progress"] = 8 + int((i + 1) / total_pages * 22)
 
-    # 扫描页走视觉 OCR（只调缺的页），结果原地替换占位
+    # 扫描页走视觉 OCR（只调缺的页），结果原地替换占位。
+    # page_image_dir：扫描页整页快照存盘并插入正文顶部（原模原样展示）。
     if vision_pages:
-        vis = await call_ocr(file_path, config, only_pages=vision_pages)
+        vis = await call_ocr(
+            file_path, config, only_pages=vision_pages, page_image_dir=image_dir
+        )
         for p in vis:
             pages[p["page"]] = p
             job_pages[p["page"]] = p  # 占位时序即页序，索引对齐
             write_cache(
                 cache_dir,
-                ocr_key(pdf_hash, p["page"], vision_model),
+                ocr_key(pdf_hash, p["page"], vision_model + VISION_CACHE_SUFFIX),
                 {"blocks": p["blocks"]},
             )
 

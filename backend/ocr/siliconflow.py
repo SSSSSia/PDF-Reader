@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import os
 import re
 import httpx
 import pymupdf
@@ -20,8 +21,18 @@ RENDER_SCALE = 2.5# OCR 并发上限，免费额度下保守取值
 OCR_CONCURRENCY = 3
 
 
-async def call_ocr(file_path: str, config: dict, only_pages: list[int] | None = None) -> list:
-    """视觉 OCR。only_pages 指定仅识别这些页（文本层提取后仍缺内容的扫描页）。"""
+async def call_ocr(
+    file_path: str,
+    config: dict,
+    only_pages: list[int] | None = None,
+    page_image_dir: str | None = None,
+) -> list:
+    """视觉 OCR。only_pages 指定仅识别这些页（文本层提取后仍缺内容的扫描页）。
+
+    page_image_dir 非空时（用户反馈"扫描页的图片表格看不到"，2026-09-06）：
+    把每页渲染图同时存盘，并在该页 OCR markdown 顶部插入 `![Page](路径)`
+    引用——扫描页的表格/产品图都是整页位图的一部分，本地无法定位子区域，
+    整页快照是"原模原样"的兜底方案；切块后成为独立纯图片块，不送翻译。"""
     api_url = config.get("api_url", "https://api.siliconflow.cn/v1")
     api_key = config.get("api_key", "")
     model = config.get("model", DEFAULT_MODEL)
@@ -56,6 +67,32 @@ async def call_ocr(file_path: str, config: dict, only_pages: list[int] | None = 
     results = await asyncio.gather(
         *[ocr_one(page_no, b) for page_no, b in page_images]
     )
+
+    # 3) 整页快照：存盘 + 在 OCR 文本前插入页面图引用（见 docstring）。
+    #    存 JPEG（实测体积为 PNG 的 1/3~1/4，扫描型手册一页 PNG 可达 2MB+）。
+    if page_image_dir:
+        os.makedirs(page_image_dir, exist_ok=True)
+        by_page = {p["page"]: p for p in results}
+        try:
+            doc = fitz.open(file_path)
+        except Exception:
+            doc = None
+        for page_no, _ in page_images:
+            path = os.path.join(page_image_dir, f"page_p{page_no + 1:03d}.jpg")
+            try:
+                if doc is None:
+                    continue
+                pix = doc[page_no].get_pixmap(matrix=fitz.Matrix(2, 2))
+                pix.save(path)
+                blk = by_page[page_no]["blocks"][0]
+                blk["original"] = (
+                    f"![Page]({path.replace(os.sep, '/')})\n\n{blk['original']}"
+                )
+            except Exception:
+                continue  # 快照失败不阻断 OCR 结果
+        if doc is not None:
+            doc.close()
+
     return list(results)
 
 

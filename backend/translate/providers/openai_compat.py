@@ -73,7 +73,12 @@ class OpenAICompatProvider(BaseTranslator):
         payload = {
             "model": model,
             "messages": [
-                {"role": "system", "content": _system_prompt(source_lang, target_lang)},
+                {
+                    "role": "system",
+                    # 允许调用方覆盖提示词（表格单元格等特殊场景用专用提示）
+                    "content": config.get("system_prompt")
+                    or _system_prompt(source_lang, target_lang),
+                },
                 {"role": "user", "content": text},
             ],
             "max_tokens": 8192,

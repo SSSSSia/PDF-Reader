@@ -33,7 +33,8 @@ _FIG_CAPTION = re.compile(
     r"^\s*(?:Figure|Fig\.?|图)\s*\d+", re.IGNORECASE | re.MULTILINE
 )
 # 图表区域判定阈值
-_MIN_FIG_RATIO = 0.03      # 面积占页面比例下限（过滤图标/装饰线）
+_MIN_FIG_RATIO = 0.015     # 面积占页面比例下限（过滤图标/装饰线；
+                           # 0.03 实测会漏小图片表格——A4 上 150x80pt 的表约 2.5%）
 _MAX_FIG_RATIO = 0.92      # 上限（过滤整页背景）
 _MAX_FIG_TEXT_CHARS = 2000 # 区域内文本字符上限（兜底：防整页文本框误判；
                            # 矢量图表的轴标签/图例是真实文本，实测可达 1500+，
@@ -77,7 +78,7 @@ def _merge_rects(rects: list) -> list:
     return rects
 
 
-def _figure_regions(page) -> list:
+def _figure_regions(page, debug: bool = False) -> list:
     """检测页面的图表区域（栅格图 + 矢量绘图簇统一处理）。
 
     过滤规则：
@@ -86,7 +87,7 @@ def _figure_regions(page) -> list:
       不做快照——文本层已能完整提取表格内容，截图反而无法翻译）；
     - 区域内部文本超 _MAX_FIG_TEXT_CHARS 兜底排除（防整页文本框误判；
       注意矢量图表轴标签是真实文本，正常图表可达 1500+ 字符）。
-    返回按 y0 排序的 Rect 列表。"""
+    返回按 y0 排序的 Rect 列表。debug=True 时打印各环节计数与跳过原因。"""
     page_area = page.rect.width * page.rect.height
     rects: list = []
     try:
@@ -105,6 +106,11 @@ def _figure_regions(page) -> list:
     except Exception:
         pass
     merged = _merge_rects(rects)
+    if debug:
+        print(
+            f"[figure] p{page.number + 1}: 栅格rect={len(rects) - 0} "
+            f"矢量簇候选={len(merged)} 表格bbox={len(table_boxes)}"
+        )
     figs = []
     for r in merged:
         r = r & page.rect  # 裁剪到页面内
@@ -112,6 +118,8 @@ def _figure_regions(page) -> list:
             continue
         ratio = r.width * r.height / page_area
         if ratio < _MIN_FIG_RATIO or ratio > _MAX_FIG_RATIO:
+            if debug:
+                print(f"[figure] p{page.number + 1}: 跳过(面积比{ratio:.3f}) {r}")
             continue
         skip = False
         for tb in table_boxes:
@@ -120,23 +128,27 @@ def _figure_regions(page) -> list:
                 skip = True  # 主体是表格，不快照
                 break
         if skip:
+            if debug:
+                print(f"[figure] p{page.number + 1}: 跳过(表格重叠) {r}")
             continue
         try:
             text_chars = len(page.get_text("text", clip=r).strip())
         except Exception:
             text_chars = 0
         if text_chars > _MAX_FIG_TEXT_CHARS:
+            if debug:
+                print(f"[figure] p{page.number + 1}: 跳过(文本{text_chars}过密) {r}")
             continue  # 文本过密（整页文本框），兜底排除
         figs.append(r)
     figs.sort(key=lambda r: (r.y0, r.x0))
     return figs
 
 
-def _snapshot_figures(doc, page_num: int, image_dir: str) -> list[str]:
+def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) -> list[str]:
     """把页面图表区域截图为 PNG，返回可插入 markdown 的图片引用列表（按 y 序）。"""
     page = doc[page_num]
     refs: list[str] = []
-    for k, r in enumerate(_figure_regions(page)):
+    for k, r in enumerate(_figure_regions(page, debug=debug)):
         path = os.path.join(image_dir, f"fig_p{page_num + 1:03d}_{k:02d}.png")
         try:
             pix = page.get_pixmap(
@@ -145,6 +157,8 @@ def _snapshot_figures(doc, page_num: int, image_dir: str) -> list[str]:
             pix.save(path)
         except Exception:
             continue  # 单个快照失败不阻断整页
+        if debug:
+            print(f"[figure] p{page_num + 1}: 快照#{k} -> {os.path.basename(path)} {r}")
         refs.append(f"![Figure]({path.replace(os.sep, '/')})")
     return refs
 

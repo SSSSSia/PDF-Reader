@@ -84,10 +84,16 @@ export default function BilingualPage() {
             isPureImage(b.original) ? (
               <div
                 key={`${b.page}-${b.block_id}`}
-                className="border-b border-dashed border-slate-200 py-4 dark:border-slate-700"
-                style={{ contentVisibility: "auto", containIntrinsicSize: "auto 220px" }}
+                className="grid grid-cols-2 gap-x-8 border-b border-dashed border-slate-200 dark:border-slate-700"
+                style={{ contentVisibility: "auto", containIntrinsicSize: "auto 260px" }}
               >
-                <MarkdownText text={b.original} />
+                <div className="py-3 pr-2">
+                  <MarkdownText text={b.original} />
+                </div>
+                <div className="border-l border-slate-200 py-3 pl-2 dark:border-slate-700">
+                  {/* 译制图（原排版+图内文字译文）；未生成完成时回退原图 */}
+                  <MarkdownText text={b.translated || b.original} />
+                </div>
               </div>
             ) : (
               <div

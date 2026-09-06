@@ -32,6 +32,10 @@ _SUB_MAP = str.maketrans("0123456789+-=()n", "₀₁₂₃₄₅₆₇₈₉₊�
 _FIG_CAPTION = re.compile(
     r"^\s*(?:Figure|Fig\.?|图)\s*\d+", re.IGNORECASE | re.MULTILINE
 )
+# 单行图注匹配（redact 时豁免图注文本块用）
+_FIG_CAPTION_LINE = re.compile(
+    r"^\s*(?:Figure|Fig\.?|图)\s*\d+", re.IGNORECASE
+)
 # 图表区域判定阈值
 _MIN_FIG_RATIO = 0.015     # 面积占页面比例下限（过滤图标/装饰线；
                            # 0.03 实测会漏小图片表格——A4 上 150x80pt 的表约 2.5%）
@@ -144,8 +148,74 @@ def _figure_regions(page, debug: bool = False) -> list:
     return figs
 
 
+def _figure_inner_text_rects(page, regions: list) -> list:
+    """返回图表区域内部的文本块 bbox（用于 redact 剔除，2026-09-06 用户反馈）。
+
+    图/表内部的文字（表格数字、轴标签、图例）若按正文提取会变成乱码段落
+    且被重复翻译——快照图已"原模原样"包含它们，文本层必须剔除。
+    图注文本块（Figure N/图 N 开头）豁免，保住 _insert_figures 的锚点。"""
+    out: list = []
+    for b in page.get_text("blocks"):
+        r = pymupdf.Rect(b[0], b[1], b[2], b[3])
+        if r.is_empty:
+            continue
+        text = (b[4] if len(b) > 4 else "").strip()
+        for reg in regions:
+            inter = r & reg
+            if inter.is_empty:
+                continue
+            # 块主体（>60% 面积）落在区域内才算图表内部文字
+            if inter.get_area() < 0.6 * max(r.get_area(), 1.0):
+                continue
+            if _FIG_CAPTION_LINE.match(text):
+                break  # 图注豁免，保留文本与锚点
+            out.append(r)
+            break
+    return out
+
+
+def _region_lines(page, region) -> list[dict]:
+    """提取区域内逐行文字（bbox/字号/颜色），供"译制图"叠字用。
+
+    坐标为页面坐标（与 region 同系）；图注行豁免——它由正文文本层
+    负责翻译，不进译制图。"""
+    import json
+
+    lines: list[dict] = []
+    try:
+        d = page.get_text("dict", clip=region)
+    except Exception:
+        return lines
+    for blk in d.get("blocks", []):
+        if blk.get("type") != 0:
+            continue  # 只取文本块
+        for line in blk.get("lines", []):
+            text = "".join(s.get("text", "") for s in line.get("spans", [])).strip()
+            if not text or _FIG_CAPTION_LINE.match(text):
+                continue
+            spans = [s for s in line.get("spans", []) if s.get("text", "").strip()]
+            if not spans:
+                continue
+            size = max(s.get("size", 10.0) for s in spans)
+            color = spans[0].get("color", 0)
+            lines.append(
+                {
+                    "text": text,
+                    "bbox": [round(v, 2) for v in line["bbox"]],
+                    "size": round(size, 1),
+                    "color": int(color),
+                }
+            )
+    return lines
+
+
 def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) -> list[str]:
-    """把页面图表区域截图为 PNG，返回可插入 markdown 的图片引用列表（按 y 序）。"""
+    """把页面图表区域截图为 PNG，返回可插入 markdown 的图片引用列表（按 y 序）。
+
+    同时落盘 sidecar JSON（<fig>.json：区域坐标 + 图内逐行文字元数据），
+    供翻译阶段生成"译制图"（原排版+译文叠字，2026-09-06 用户需求）。"""
+    import json
+
     page = doc[page_num]
     refs: list[str] = []
     for k, r in enumerate(_figure_regions(page, debug=debug)):
@@ -159,6 +229,18 @@ def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) ->
             continue  # 单个快照失败不阻断整页
         if debug:
             print(f"[figure] p{page_num + 1}: 快照#{k} -> {os.path.basename(path)} {r}")
+        # sidecar：译制图的原料（区域 + 图内逐行文字）
+        try:
+            sidecar = {
+                "png": path.replace(os.sep, "/"),
+                "page": page_num,
+                "region": [round(v, 2) for v in list(r)],
+                "lines": _region_lines(page, r),
+            }
+            with open(path + ".json", "w", encoding="utf-8") as f:
+                json.dump(sidecar, f, ensure_ascii=False)
+        except Exception:
+            pass  # sidecar 失败只影响译制图，不影响快照
         refs.append(f"![Figure]({path.replace(os.sep, '/')})")
     return refs
 
@@ -217,22 +299,50 @@ def extract_pages(
     - 统一走 _snapshot_figures：检测「栅格图区域 + 矢量绘图簇」（合并、
       面积/文本密度过滤），高清截图后按 caption 锚定插回 markdown——
       矢量图表（LaTeX/绘图导出）也能原样显示。
-    单页提取约 0.5s（表格检测为主），上层逐页调用实现首页秒开。
+    - 图表内部文字 redact 剔除（用户反馈"图片被转成文字重复翻译"，同日）：
+      在文档副本上对区域内的文本块做 redaction（图注豁免），pymupdf4llm
+      改在副本上提取——图内文字只存在于快照图中，不再变成乱码段落。
+    单页提取约 0.5-1s（表格检测+redact 副本），上层逐页调用实现首页秒开。
     """
     doc = pymupdf.open(file_path)
     try:
-        chunks = pymupdf4llm.to_markdown(doc, page_chunks=True, pages=page_nums)
         out: list[str | None] = []
-        for idx, c in enumerate(chunks):
+        for idx, pno in enumerate(page_nums):
+            # 1) 先在原文档上快照（渲染含图内文字，所见即所得）
+            refs = (
+                _snapshot_figures(doc, pno, image_dir) if image_dir else []
+            )
+            # 2) 提取文本：有图表区域的页在 redact 副本上提取
+            page = doc[pno]
+            regions = _figure_regions(page, debug=False) if refs else []
+            inner = _figure_inner_text_rects(page, regions) if regions else []
+            if inner and refs:
+                with pymupdf.open(file_path) as doc2:
+                    page2 = doc2[pno]
+                    for r in inner:
+                        page2.add_redact_annot(r)
+                    try:
+                        page2.apply_redactions(
+                            images=pymupdf.PDF_REDACT_IMAGE_NONE
+                        )
+                    except TypeError:
+                        page2.apply_redactions()
+                    chunks = pymupdf4llm.to_markdown(
+                        doc2, page_chunks=True, pages=[pno]
+                    )
+                if refs:
+                    print(f"[figure] p{pno + 1}: redact 图内文本块 {len(inner)} 个")
+            else:
+                chunks = pymupdf4llm.to_markdown(doc, page_chunks=True, pages=[pno])
+            c = chunks[0] if chunks else {}
             md = (c.get("text") or "").strip()
             if md:
                 md = _clean_html(md)
                 if image_dir:
                     md = _normalize_image_refs(md, image_dir)
-                    md = _insert_figures(
-                        md, _snapshot_figures(doc, page_nums[idx], image_dir)
-                    )
-            out.append(md if len(md) >= MIN_TEXT_CHARS else None)
+                    md = _insert_figures(md, refs)
+            # 有快照的页即使文字变短也算有效文本层（文字进了图，不回退 OCR）
+            out.append(md if (len(md) >= MIN_TEXT_CHARS or refs) else None)
         return out
     finally:
         doc.close()

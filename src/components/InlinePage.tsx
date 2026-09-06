@@ -76,14 +76,10 @@ export default function InlinePage() {
               style={{ contentVisibility: "auto", containIntrinsicSize: "auto 120px" }}
             >
               {isPureImage(b.original) ? (
-                /* 图表块：整块居中，原样呈现，不与译文配对 */
+                /* 图表块：只出现一次，优先显示译制图（原排版+图内文字译文），
+                   未生成完成时回退原图；下方图注块照常原文+译文对照 */
                 <figure className="my-6 flex flex-col items-center">
-                  <MarkdownText text={b.original} />
-                  {b.translated && b.translated !== b.original && (
-                    <figcaption className="mt-2 text-center text-sm text-slate-500 dark:text-slate-400 paper-font">
-                      <MarkdownText text={b.translated} />
-                    </figcaption>
-                  )}
+                  <MarkdownText text={b.translated || b.original} />
                 </figure>
               ) : (
                 <>

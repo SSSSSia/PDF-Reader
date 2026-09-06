@@ -28,7 +28,8 @@ MAX_CONCURRENCY = 8
 # 文本层提取结果在 OCR 缓存中的伪模型名（与视觉模型缓存隔离）。
 # v2：提取内容增加 HTML 清理（<br>/<sup>/注释），旧缓存含脏数据需失效。
 # v3：图片策略改为图表区域快照（矢量图/碎栅格统一截图插回），markdown 内容变化。
-TEXT_LAYER_MODEL = "text-layer-v3"
+# v4：图表内部文字 redact 剔除（不再与快照图重复），markdown 内容变化。
+TEXT_LAYER_MODEL = "text-layer-v4"
 
 # 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
 # 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。
@@ -134,8 +135,30 @@ def _split_page(page: dict) -> dict:
 
 
 # 纯图片块（图表快照插入产生的 ![Figure](path)）：
-# 不送翻译（模型只会胡编图注），译文直接复制原文，前端整行居中渲染
+# 原文块=原图快照；译文块=译制图（原排版+图内文字译文，见 ocr/figtranslate.py）
 _PURE_IMAGE = re.compile(r"^\s*!\[[^\]]*\]\([^)]+\)\s*$")
+# 从图片引用中提取本地路径
+_IMG_PATH = re.compile(r"^\s*!\[[^\]]*\]\(([^)]+)\)\s*$")
+
+
+async def _translate_figure_block(original_md: str, file_path: str, t_cfg: dict) -> str | None:
+    """对图表快照块生成译制图。失败返回 None（前端回退显示原图）。"""
+    from ocr.figtranslate import translate_figure
+
+    m = _IMG_PATH.match(original_md)
+    if not m:
+        return None
+    png = m.group(1)
+    sidecar = png + ".json"
+    if not os.path.isfile(sidecar):
+        return None
+    try:
+        zh = await translate_figure(sidecar, file_path, t_cfg)
+        if zh and os.path.isfile(zh):
+            return f"![Figure]({zh.replace(os.sep, '/')})"
+    except Exception as e:
+        print(f"[figure] 译制图生成失败（回退原图）: {e}")
+    return None
 
 
 async def _load_or_run_ocr(file_path: str, pdf_hash: str, config: dict, job: dict) -> list:
@@ -243,8 +266,23 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                     block["translated"] = ""
                     continue
                 if _PURE_IMAGE.match(original):
-                    # 图表快照块：不翻译，译文=原文（前端整行居中展示）
+                    # 图表块：走"译制图"管线（原排版+图内文字译文的图片）。
+                    # 无 sidecar（旧缓存/纯图形）回退原图。译制图路径入翻译缓存。
                     block["translated"] = original
+                    key = translate_key(text_hash(original), target_lang, model)
+                    cached = read_cache(settings.cache_dir, key)
+                    if cached and cached.get("translated"):
+                        block["translated"] = cached["translated"]
+                        stats["tr_cache_hit"] += 1
+                        stats["tr_total"] += 1
+                    else:
+                        stats["tr_total"] += 1
+                        fig_img = await _translate_figure_block(
+                            original, file_path, t_cfg
+                        )
+                        if fig_img:
+                            block["translated"] = fig_img
+                            write_cache(settings.cache_dir, key, {"translated": fig_img})
                     continue
                 key = translate_key(text_hash(original), target_lang, model)
                 cached = read_cache(settings.cache_dir, key)

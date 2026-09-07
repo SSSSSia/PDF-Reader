@@ -105,6 +105,27 @@ def strip_stray_emphasis(text: str) -> str:
     return "\n".join(out)
 
 
+def is_echo(original: str, translated: str, target_lang: str) -> bool:
+    """译文"回声"判定：译中文时译文完全没有汉字而原文是英文段落
+    （≥3 个英文单词）——模型原样返回了原文。
+
+    实测（DualR 22 页 29 个）：参考文献条目（- [15] ...）、作者信息、
+    表题（Table 5: ...）、代码块都是高发形态，用户看到英文就是"没翻译"。
+    代码块（``` 包裹）豁免——本就约定保留原文。
+    """
+    t = (translated or "").strip()
+    o = (original or "").strip()
+    if not t or not o:
+        return False
+    if not target_lang.lower().startswith("zh"):
+        return False
+    if "```" in o:
+        return False
+    if re.search(r"[\u4e00-\u9fff]", t):
+        return False
+    return len(re.findall(r"[A-Za-z]{2,}", o)) >= 3
+
+
 def is_formula_block(md: str) -> bool:
     """**纯公式块** → True（跳过翻译，译文=原文）。
 

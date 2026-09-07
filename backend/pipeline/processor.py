@@ -445,14 +445,30 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
             pass
 
         # 失败块补翻一轮（用户截图反馈"待翻译…"残留）：瞬时故障（限流/
-        # 网络抖动）导致的空译文，重试一次即可恢复；仍失败保持留空不阻塞
+        # 网络抖动）导致的空译文，重试一次即可恢复；仍失败保持留空不阻塞。
+        # 回声块（DualR 实测 29 个）同样补翻：模型原样返回原文（参考文献/
+        # 表题等），用户看到英文即"没翻译"——清空译文后与新提示词重翻。
         retry = [
             (page, block, key)
             for page, block, key in pending
             if not (block.get("translated") or "").strip()
+            or sanitize.is_echo(
+                block.get("original") or "",
+                block.get("translated") or "",
+                target_lang,
+            )
         ]
+        for _, block, _ in retry:
+            if sanitize.is_echo(
+                block.get("original") or "",
+                block.get("translated") or "",
+                target_lang,
+            ):
+                block["translated"] = ""  # 清空回声，让补翻重写并回写缓存
         if retry:
-            print(f"[translate] {len(retry)} 个块译文为空，补翻一轮")
+            print(
+                f"[translate] {len(retry)} 个块译文为空/回声，补翻一轮"
+            )
             retry_chunks = [retry[i : i + 10] for i in range(0, len(retry), 10)]
             try:
                 await asyncio.gather(*[_translate_chunk(c) for c in retry_chunks])

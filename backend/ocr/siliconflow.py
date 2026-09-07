@@ -191,16 +191,36 @@ _FOOTER_PAT = re.compile(
 )
 _FOOTER_MAX_CHARS = 140
 
+# run-in 引导标题拆分（用户反馈"只有一个标题，但输出了一大段话"，
+# 2026-09-07 Survey 实测）：术语定义段以斜体/粗体引导词开头
+# （"_Graph-Enhanced Generation (G-Generation)._ The graph-enhanced ..."，
+# LaTeX \paragraph{} 惯例），标题与定义正文拆成两块——标题单独成块
+# 展示/翻译，正文独立参与续段合并。终结符必须在强调符内侧才拆
+# （句中普通强调 "_is_" 无终结符不匹配）。
+_RUN_IN_LEAD = re.compile(
+    r"^(?P<lead>(_|\*\*)[^*_\n]{2,120}?[.。:：;；](_|\*\*))[ \t]*(?P<rest>\S.*)$",
+    re.DOTALL,
+)
+
 
 def split_into_blocks(text: str) -> list[str]:
     text = (text or "").strip()
     if not text:
         return []
     blocks = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    # run-in 引导标题拆分（标题/正文各成一块，见 _RUN_IN_LEAD 注释）
+    expanded: list[str] = []
+    for b in blocks:
+        m = _RUN_IN_LEAD.match(b)
+        if m:
+            expanded.append(m.group("lead"))
+            expanded.append(m.group("rest").strip())
+        else:
+            expanded.append(b)
     # 过滤页码/页脚噪音块（去空格后匹配，兼容 "1 2" 之类异常排版）
     return [
         b
-        for b in blocks
+        for b in expanded
         if not _NOISE_BLOCK.match(re.sub(r"\s+", "", b))
         and not (len(b) < 60 and _RUNNING_HEAD.match(b))
         and not (len(b) < _FOOTER_MAX_CHARS and _FOOTER_PAT.search(b))

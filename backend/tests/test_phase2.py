@@ -482,3 +482,36 @@ def test_merge_list_item_continuation():
         "- We delineate downstream tasks, benchmarks and applications, "
         "discussing both the progress and prospects of this field."
     )
+
+
+# ── run-in 引导标题拆分（Survey 实测：术语定义段 _Lead._ 正文）────────
+
+
+def test_run_in_italic_lead_split():
+    from ocr.siliconflow import split_into_blocks
+    text = (
+        "_Graph-Enhanced Generation (G-Generation)._ The graph-enhanced "
+        "generation phase involves synthesizing meaningful outputs."
+    )
+    blocks = split_into_blocks(text)
+    assert blocks == [
+        "_Graph-Enhanced Generation (G-Generation)._",
+        "The graph-enhanced generation phase involves synthesizing meaningful outputs.",
+    ]
+
+
+def test_run_in_bold_lead_split():
+    from ocr.siliconflow import split_into_blocks
+    text = "**Organization.** The rest of the survey is organized as follows."
+    blocks = split_into_blocks(text)
+    assert blocks == [
+        "**Organization.**",
+        "The rest of the survey is organized as follows.",
+    ]
+
+
+def test_mid_sentence_emphasis_not_split():
+    from ocr.siliconflow import split_into_blocks
+    text = "This _is_ important because the results hold across all settings."
+    blocks = split_into_blocks(text)
+    assert blocks == [text]  # 句中强调无终结符，不拆

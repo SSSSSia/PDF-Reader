@@ -52,8 +52,9 @@ export function usePdfThumbnails() {
       try {
         // 桥接层根据运行环境返回可用 URL：Tauri 用 convertFileSrc，浏览器用后端原始文件接口
         const src = convertFileSrc(filePath);
-        // pdfjs v4 的 getDocument 类型对纯 string 较严格，这里用 any 规避类型噪声
-        const task = pdfjsLib.getDocument(src as any);
+        // pdfjs 6 起只收 DocumentInitParameters 对象（裸字符串简写已删除，
+        // 传 string 会抛 "expected either data, range, or url parameter"）
+        const task = pdfjsLib.getDocument({ url: src } as any);
         const pdf: any = await task.promise;
         if (!active) {
           pdf.destroy?.();

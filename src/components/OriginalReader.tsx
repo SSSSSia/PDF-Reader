@@ -43,7 +43,12 @@ export default function OriginalReader() {
     (async () => {
       try {
         setError(null);
-        doc = await pdfjsLib.getDocument(convertFileSrc(filePath) as any).promise;
+        // pdfjs 6 破坏性变更：getDocument 只收 DocumentInitParameters 对象，
+        // 裸字符串简写已删除（传 string 时 src.url 为 undefined 直接抛
+        // "expected either data, range, or url parameter"，实测踩坑）
+        doc = await pdfjsLib
+          .getDocument({ url: convertFileSrc(filePath) } as any)
+          .promise;
         if (cancelled) {
           doc.destroy?.();
           return;

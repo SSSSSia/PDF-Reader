@@ -6,6 +6,19 @@ import "katex/dist/katex.min.css";
 import { assetUrl, openExternal } from "../../lib/bridge";
 import { preprocessMath } from "../../lib/mathFragment";
 
+// 含中文判定（CJK 扩展 A + 基本区）
+const _CJK = /[\u3400-\u4dbf\u4e00-\u9fff]/;
+
+/** 摊平 React 子节点取纯文本（用于判断 em 内容的语言） */
+function nodeText(node: unknown): string {
+  if (node == null || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(nodeText).join("");
+  if (typeof node === "object" && (node as any).props)
+    return nodeText((node as any).props.children);
+  return "";
+}
+
 /**
  * Markdown 渲染组件：OCR/文本层返回的是 markdown（含表格/标题/公式/图片引用），
  * 旧实现当纯文本渲染导致排版错乱（实测问题），统一走 typography 排版。
@@ -24,6 +37,16 @@ export default function MarkdownText({ text }: { text: string }) {
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
         urlTransform={(url) => url}
         components={{
+          // 中文斜体修正（用户实测"字体很奇怪"）：源文粗斜体（论文标题常见）
+          // 保留 _.._ 标记 → <em> 斜体 → 中文没有真斜体字形，Windows
+          // Chromium 回退渲染成楷体。中文排版规范强调用粗体不用斜体：
+          // 含中文的 em 转加粗正体；纯西文 em 保持斜体（术语/书名惯例）
+          em: ({ children }) =>
+            _CJK.test(nodeText(children)) ? (
+              <em className="not-italic font-bold">{children}</em>
+            ) : (
+              <em>{children}</em>
+            ),
           a: ({ href, children }) => {
             // 链接不在软件内打开（会顶掉整个阅读界面）：
             // Tauri 内经 shell.open 交给默认浏览器，浏览器内开新标签页

@@ -22,6 +22,9 @@ _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _BR_TAG = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _SUP_TAG = re.compile(r"<sup>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
 _SUB_TAG = re.compile(r"<sub>(.*?)</sub>", re.IGNORECASE | re.DOTALL)
+# 下划线标签（阶段2-T5 用户反馈"下划线还在"）：markdown 无下划线语法，
+# 裸 HTML 会原样露出 → 只剥标签保留内容
+_U_TAG = re.compile(r"</?u>", re.IGNORECASE)
 
 # 上/下标字符映射：把 <sup>12</sup> 转成 ¹²，语义不丢失且不再是裸 HTML
 _SUP_MAP = str.maketrans("0123456789+-=()ni", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ")
@@ -59,6 +62,7 @@ def _clean_html(md: str) -> str:
     - 实体转义还原。"""
     md = _HTML_COMMENT.sub("", md)
     md = _BR_TAG.sub(" ", md)
+    md = _U_TAG.sub("", md)
     md = _SUP_TAG.sub(lambda m: m.group(1).translate(_SUP_MAP), md)
     md = _SUB_TAG.sub(lambda m: m.group(1).translate(_SUB_MAP), md)
     md = md.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")

@@ -12,6 +12,8 @@ from config import settings
 from ocr.siliconflow import call_ocr, split_into_blocks
 from ocr.textlayer import extract_pages, count_pages, MIN_TEXT_CHARS
 from translate.base import translate_batch, translate_text
+from translate.providers.openai_compat import PROMPT_VERSION
+from translate import sanitize
 from cache.file_cache import (
     file_hash,
     text_hash,
@@ -33,7 +35,8 @@ MAX_CONCURRENCY = 8
 # v6：快照按类型命名（tab_*/fig_*），sidecar 记录 kind 与源 PDF，markdown 变化。
 # v7：修复快照目录未创建导致 save 全部静默失败（首跑新文件无图无快照，TOG 实测）。
 # v8：区域合并加空隙容差（图内文字行隔开的绘图簇不再把一张图拆成多条横带）。
-TEXT_LAYER_MODEL = "text-layer-v8"
+# v9：清理 <u> 下划线标签（用户反馈"下划线还在"），markdown 内容变化。
+TEXT_LAYER_MODEL = "text-layer-v9"
 
 # 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
 # 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。
@@ -136,6 +139,47 @@ def _split_page(page: dict) -> dict:
         for i, p in enumerate(parts)
     ]
     return {"page": page["page"], "blocks": blocks}
+
+
+# ── 跨页段落合并（阶段2-T3）──────────────────────────────────────────
+# _split_page 按页切块 → 跨页段落被切成两块，紧跟模式同段显示两次残文。
+# 保守规则：前页末 block 不以终止符结尾 且 后页首 block 不以结构标记开头
+# → 合并，归属前页。误合并靠日志回查。
+_BLOCK_TERMINAL = tuple(".!?:。！？：；;\"')]）】")
+_STRUCT_START = re.compile(r"^(#{1,6}\s|\||!\[|[-*+]\s|\d+[.)]\s|>)")
+
+
+def _merge_cross_page(pages: list) -> list:
+    """跨页段落合并（原地修改 pages，返回同一引用）。"""
+    for i in range(len(pages) - 1):
+        b1, b2 = pages[i].get("blocks", []), pages[i + 1].get("blocks", [])
+        if not b1 or not b2:
+            continue
+        last, first = b1[-1], b2[0]
+        o1 = (last.get("original") or "").strip()
+        o2 = (first.get("original") or "").strip()
+        if not o1 or not o2:
+            continue
+        # 任一侧是图表块/标题块不合并；前段已完结句不合并；后段是结构块不合并
+        if _PURE_IMAGE.match(o1) or _PURE_IMAGE.match(o2):
+            continue
+        if o1.startswith("#") or o1.endswith("---"):
+            continue
+        if o1.endswith(_BLOCK_TERMINAL):
+            continue
+        if _STRUCT_START.match(o2):
+            continue
+        # 英文断词跨页（句末是连字符）直接拼接，否则空格连接
+        if o1.endswith("-"):
+            merged = o1[:-1] + o2
+        else:
+            merged = o1 + " " + o2
+        last["original"] = merged
+        b2.pop(0)
+        print(
+            f"[merge] 跨页段落合并: p{pages[i]['page'] + 1}→p{pages[i + 1]['page'] + 1}"
+        )
+    return pages
 
 
 # 纯图片块（图表快照插入产生的 ![Figure](path)）：
@@ -258,13 +302,32 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         # 把每页「整块 markdown」切成段/句级 block（对照粒度，见决策），
         # 切块发生在 OCR 缓存读取之后，因此不动 OCR 缓存粒度。
         pages = [_split_page(p) for p in pages]
+        # 跨页段落合并（阶段2-T3）：紧跟模式不再把跨页同段显示成两块残文
+        pages = _merge_cross_page(pages)
         job["progress"] = 30
 
         # ---- 阶段 2：翻译（30% ~ 100%）----
-        t_cfg = settings.translate_config
+        t_cfg = dict(settings.translate_config)  # 拷贝：术语表等运行期注入不污染全局配置
         target_lang = t_cfg.get("target_language", "en")
         source_lang = t_cfg.get("source_language", "zh")
         model = t_cfg.get("model", "")
+
+        # 术语表两遍法 Pass 0（阶段2-T4）：全文翻译前先抽术语，注入系统提示词。
+        # 失败自动降级直译（glossary 返回 {}），绝不阻塞主链路。
+        from translate.glossary import build_glossary
+
+        glossary = await build_glossary(pages, t_cfg, settings.cache_dir, pdf_hash)
+        if glossary:
+            t_cfg["glossary"] = glossary
+        # 论文标题（第 0 页首个 # 标题）随术语表一起注入提示词
+        for page in pages:
+            for block in page["blocks"]:
+                m = re.match(r"^#\s+(.{4,120})$", (block.get("original") or "").strip())
+                if m:
+                    t_cfg["doc_title"] = m.group(1).strip()
+                    break
+            if "doc_title" in t_cfg:
+                break
 
         # 先收集所有需要翻译的 block（跳过空白、纯图片与已缓存的）
         pending: list[tuple] = []  # (page, block, cache_key)
@@ -281,7 +344,9 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                     # 走"译制图"管线并并发调度（串行 await 曾把进度堵在 30%）。
                     block["translated"] = original
                     if FIGURE_TRANSLATION_ENABLED:
-                        key = translate_key(text_hash(original), target_lang, model)
+                        key = translate_key(
+                            text_hash(original), target_lang, model, PROMPT_VERSION
+                        )
                         cached = read_cache(settings.cache_dir, key)
                         if cached and cached.get("translated"):
                             block["translated"] = cached["translated"]
@@ -301,7 +366,13 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                                 )
                             )
                     continue
-                key = translate_key(text_hash(original), target_lang, model)
+                # 公式密集块（阶段2-T5）：数学碎片翻译毫无意义，译文=原文
+                if sanitize.is_formula_block(original):
+                    block["translated"] = original
+                    continue
+                key = translate_key(
+                    text_hash(original), target_lang, model, PROMPT_VERSION
+                )
                 cached = read_cache(settings.cache_dir, key)
                 if cached and cached.get("translated"):
                     block["translated"] = cached["translated"]
@@ -323,9 +394,14 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
             nonlocal done
             async with sem:
                 texts = [b["original"] for _, b, _ in chunk]
+                # 公式保护（阶段2-T5）：LaTeX 占位后送翻，译文回来再还原
+                protected = [sanitize.protect_math(t) for t in texts]
                 try:
                     outs = await translate_batch(
-                        texts, source_lang, target_lang, t_cfg
+                        [p for p, _ in protected],
+                        source_lang,
+                        target_lang,
+                        t_cfg,
                     )
                     if len(outs) != len(texts):
                         raise ValueError(
@@ -334,19 +410,21 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                 except Exception:
                     # 批量失败：逐条回退，宁可慢不可丢
                     outs = []
-                    for t in texts:
+                    for p, _restore in protected:
                         try:
                             outs.append(
                                 await translate_text(
-                                    t, source_lang, target_lang, t_cfg
+                                    p, source_lang, target_lang, t_cfg
                                 )
                             )
                         except Exception as e:
                             print(f"[translate] 单段翻译失败: {e}")
                             outs.append("")
-                for (_, block, key), translated in zip(chunk, outs):
-                    block["translated"] = translated
-                    write_cache(settings.cache_dir, key, {"translated": translated})
+                for (_, block, key), (p, restore), translated in zip(
+                    chunk, protected, outs
+                ):
+                    block["translated"] = restore(translated or "")
+                    write_cache(settings.cache_dir, key, {"translated": block["translated"]})
                     done += 1
                     job["progress"] = 30 + int(done / total * 70)
 

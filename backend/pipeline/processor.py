@@ -531,10 +531,17 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                     # 回声（模型原样照抄原文）不落缓存：否则下轮缓存命中
                     # 直接展示英文原文当译文，且永远绕过补翻（Survey 实测：
                     # 参考文献整节回声落缓存，2026-09-07）
+                    # 融合译文同样不落缓存：标题块吞正文的单段膨胀形态
+                    # 曾落缓存，此后每轮命中每轮展示（ToG 摘要实测
+                    # 2026-09-07 晚）
+                    _orig = block.get("original") or ""
                     if not sanitize.is_echo(
-                        block.get("original") or "",
+                        _orig,
                         block["translated"],
                         target_lang,
+                    ) and not sanitize.is_fused_translation(
+                        _orig,
+                        block["translated"],
                     ):
                         write_cache(settings.cache_dir, key, {"translated": block["translated"]})
                     if advance:
@@ -560,23 +567,26 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         # 网络抖动）导致的空译文，重试一次即可恢复；仍失败保持留空不阻塞。
         # 回声块（DualR 实测 29 个）同样补翻：模型原样返回原文（参考文献/
         # 表题等），用户看到英文即"没翻译"——清空译文后与新提示词重翻。
+        # 融合块（ToG 实测：标题块吞正文单段膨胀）一并清空补翻。
+        def _needs_retry(block: dict) -> bool:
+            orig = block.get("original") or ""
+            trans = block.get("translated") or ""
+            return (
+                not trans.strip()
+                or sanitize.is_echo(orig, trans, target_lang)
+                or sanitize.is_fused_translation(orig, trans)
+            )
+
         retry = [
             (page, block, key)
             for page, block, key in pending
-            if not (block.get("translated") or "").strip()
-            or sanitize.is_echo(
-                block.get("original") or "",
-                block.get("translated") or "",
-                target_lang,
-            )
+            if _needs_retry(block)
         ]
         for _, block, _ in retry:
-            if sanitize.is_echo(
-                block.get("original") or "",
-                block.get("translated") or "",
-                target_lang,
-            ):
-                block["translated"] = ""  # 清空回声，让补翻重写并回写缓存
+            orig = block.get("original") or ""
+            trans = block.get("translated") or ""
+            if sanitize.is_echo(orig, trans, target_lang) or sanitize.is_fused_translation(orig, trans):
+                block["translated"] = ""  # 清空回声/融合，让补翻重写并回写缓存
         if retry:
             print(
                 f"[translate] {len(retry)} 个块译文为空/回声，补翻一轮"

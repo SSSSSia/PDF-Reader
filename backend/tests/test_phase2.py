@@ -539,6 +539,39 @@ def test_fused_translation_normal_not_flagged():
     )
 
 
+def test_fused_translation_heading_bloat_detected():
+    """ToG 实测（2026-09-07 晚）：标题译文后融进整段正文且无空行分段——
+    旧判据（译文 ≥3 空行分段）漏网，形状判据（短标题行 + 译文膨胀）补位。"""
+    from translate.sanitize import is_fused_translation
+    body = (
+        "随着大语言模型（Large Language Model, LLM）在自然语言处理领域的广泛应用，"
+        "其在复杂知识推理任务中的表现逐渐成为研究热点。然而，LLM 在处理多跳知识推理"
+        "任务时常常面临知识可追溯性和知识可校正性的挑战，这可能导致模型产生幻觉现象，"
+        "即生成与事实不符的推理路径。为了解决这一问题，本文提出了一种新的融合范式。"
+    )
+    # 真实落缓存的形态："# 摘要" + 单段正文（空行分段后只有 2 段，旧判据不命中）
+    assert is_fused_translation("ABSTRACT", "# 摘要\n\n" + body)
+    # 完全无空行的形态
+    assert is_fused_translation("ABSTRACT", "# 摘要" + body)
+
+
+def test_fused_translation_heading_bloat_not_flagged():
+    from translate.sanitize import is_fused_translation
+    # 合法标题：译文短
+    assert not is_fused_translation("# ABSTRACT", "# 摘要")
+    # 论文长标题 + 适中译文：比例正常不误报
+    assert not is_fused_translation(
+        "THINK-ON-GRAPH: DEEP AND RESPONSIBLE REASONING OF LARGE LANGUAGE MODEL "
+        "ON KNOWLEDGE GRAPH",
+        "Think-on-Graph：大语言模型在知识图谱上的深度与负责任推理",
+    )
+    # 多段原文（章节块）：不满足"单行短标题"形态，正文再长也不误杀
+    assert not is_fused_translation(
+        "# 3 方法\n\n本节介绍框架。",
+        "# 3 方法\n\n" + "本节详细介绍框架的各个组成部分与实现细节。" * 30,
+    )
+
+
 def test_translate_chunk_fused_triggers_halving():
     from unittest.mock import patch
 

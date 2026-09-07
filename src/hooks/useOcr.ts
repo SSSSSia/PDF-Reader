@@ -3,7 +3,10 @@ import { usePdfStore } from "../stores/pdfStore";
 import { runPipeline, getPipelineStatus } from "../lib/bridge";
 import { PageResult, PipelineResult } from "../types";
 
-const POLL_INTERVAL_MS = 1000;
+// 2.5s 轮询：1s 曾被用户反馈"太频繁"；渐进呈现下译文流入的感知延迟
+// 主要由后端批处理节奏决定，2.5s 不影响体感（每秒仍 whole-payload 序列化，
+// 长文档可考虑后续做增量状态接口）
+const POLL_INTERVAL_MS = 2500;
 const MAX_WAIT_MS = 30 * 60 * 1000; // 30 分钟上限，避免无限轮询
 
 /** pages 渐进签名：已译 block 数。签名不变则跳过 setState，避免每秒无变化重渲染（阶段1-T1 去抖）。 */

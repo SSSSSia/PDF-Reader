@@ -168,9 +168,17 @@ def is_fused_translation(original: str, translated: str) -> bool:
     2026-09-07）：批量翻译时模型把整个批次的译文全塞进 <<<0>>> 段——
     标题块的译文里带着摘要/引言/方法全文，而段数校验照样通过。
 
-    判据：原文只有 1 个段落、译文却拆出 ≥3 个段落（空行分隔）——
-    正常翻译不会凭空增加段落结构。命中后调用方应整批减半重试
-    （provider 侧）或视为未翻译重翻（缓存命中侧）。
+    判据一：原文只有 1 个段落、译文却拆出 ≥3 个段落（空行分隔）——
+    正常翻译不会凭空增加段落结构。
+
+    判据二（ToG 实测 2026-09-07 晚）：**标题块单段膨胀**——模型把标题
+    译文和后随正文的完整译文融成一个自然段（"# 摘要\n\n随着大语言模型…"
+    整段无空行），段数判据完全漏网。补充分段无关的形状判据：原文是
+    短标题行（单行、≤100 字符、无句末标点），译文却远超标题应有长度
+    （> max(80, 4×原文长度)）。合法标题译文（"摘要"、"相关工作"）永远
+    达不到该长度；误报的代价只是该块重翻一次，漏报的代价是整节译文
+    被吞进标题并落缓存。命中后调用方应整批减半重试（provider 侧）
+    或视为未翻译重翻（缓存命中侧）。
     """
     t = (translated or "").strip()
     o = (original or "").strip()
@@ -178,7 +186,17 @@ def is_fused_translation(original: str, translated: str) -> bool:
         return False
     src_paras = [p for p in re.split(r"\n\s*\n", o) if p.strip()]
     out_paras = [p for p in re.split(r"\n\s*\n", t) if p.strip()]
-    return len(src_paras) <= 1 and len(out_paras) >= 3
+    if len(src_paras) <= 1 and len(out_paras) >= 3:
+        return True
+    # 判据二：标题块单段膨胀
+    if (
+        len(o) <= 100
+        and "\n" not in o
+        and not o.endswith((".", "!", "?", "。", "！", "？", "；", ";"))
+        and len(t) > max(80, 4 * len(o))
+    ):
+        return True
+    return False
 
 
 def is_formula_block(md: str) -> bool:

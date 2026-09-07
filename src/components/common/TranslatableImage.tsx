@@ -12,8 +12,15 @@ const ZH_IMG = /\.zh\.v\d+\.png/;
  * 全文翻译不等待表格；表格图右上角常驻「译」按钮，点击后单独调后端
  * 生成译制图（原排版+图内文字译文），就地替换显示。图（fig_*）不显示按钮。
  * 生成结果后端有文件级缓存，重复点击幂等。
+ * interactive=false 时不显示按钮（原文栏：只有译文栏可生成译制图，用户反馈 2026-09-08）。
  */
-export default function TranslatableImage({ md }: { md: string }) {
+export default function TranslatableImage({
+  md,
+  interactive = true,
+}: {
+  md: string;
+  interactive?: boolean;
+}) {
   const [text, setText] = useState(md);
   const [state, setState] = useState<"idle" | "busy" | "err" | "done">("idle");
   const [errMsg, setErrMsg] = useState("");
@@ -45,7 +52,7 @@ export default function TranslatableImage({ md }: { md: string }) {
   return (
     <div className="relative">
       <MarkdownText text={text} />
-      {state !== "done" && !alreadyZh && (
+      {interactive && state !== "done" && !alreadyZh && (
         <button
           type="button"
           onClick={handle}

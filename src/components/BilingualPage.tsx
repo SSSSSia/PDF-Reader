@@ -98,7 +98,8 @@ export default function BilingualPage() {
                 style={{ contentVisibility: "auto", containIntrinsicSize: "auto 260px" }}
               >
                 <div className="py-3 pr-2">
-                  <TranslatableImage md={b.original} />
+                  {/* 原文栏不显示「译」按钮：只有译文栏可生成译制图（用户反馈 2026-09-08） */}
+                  <TranslatableImage md={b.original} interactive={false} />
                 </div>
                 <div className="py-3 md:border-l md:border-slate-200 md:pl-2 dark:md:border-slate-700">
                   {/* 图表默认右栏也显示原图；表格可点按生成译制图 */}

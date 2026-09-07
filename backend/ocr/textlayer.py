@@ -34,6 +34,8 @@ _U_TAG = re.compile(r"</?u>", re.IGNORECASE)
 _MD_NORM = re.compile(r"[^a-z0-9]+")
 _MD_NORM_ALPHA = re.compile(r"[^a-z]+")
 _COL_WIDE = 0.55  # 块宽超过页宽此比例视为通栏（标题/摘要横排）
+# 纯图片引用段（快照锚定插入的 ![Figure](path) 单段）
+_IMG_ONLY = re.compile(r"^\s*!\[[^\]]*\]\([^)]+\)\s*$")
 
 
 def _md_norm(s: str) -> str:
@@ -77,10 +79,32 @@ def _column_reading_order(raw_blocks: list, md: str) -> str:
         right = (not wide) and r.x0 >= page_w / 2
         keys.append((1 if right else 0, r.y0, idx))
         matched.append((r, right, wide))
+    # 文本段定位不到坐标：不重排（防未知版式被搅乱）。纯图片引用段例外——
+    # 它们没有对应文本块，不能因为它们放弃整页重排（DALK p7 实测：
+    # 有快照的页全部跳过重排，换栏断词的续文永远排在其段头前面）
+    if any(
+        k is None and not _IMG_ONLY.match(paras[idx])
+        for idx, k in enumerate(keys)
+    ):
+        return md
+    # 纯图片引用段（快照插在 caption 前的 ![Figure](...)）：坐标匹配不到
+    # 文本，跟随其后第一个有 key 的段落（同 key + idx 更小 → 排在其前），
+    # 重排时图片与 caption 不拆散
+    for idx in range(len(paras)):
+        if keys[idx] is None and _IMG_ONLY.match(paras[idx]):
+            jdx = idx + 1
+            while jdx < len(paras) and _IMG_ONLY.match(paras[jdx]):
+                jdx += 1
+            if jdx < len(paras) and keys[jdx] is not None:
+                keys[idx] = keys[jdx]
+    # 页末追加的快照（没配到 caption）：退而跟随前一段，绝不留在原地挡重排
+    for idx in range(1, len(paras)):
+        if keys[idx] is None and keys[idx - 1] is not None:
+            keys[idx] = keys[idx - 1]
     if any(k is None for k in keys):
-        return md  # 有段落定位不到坐标：不重排（防未知版式被搅乱）
-    lefts = [r for r, right, wide in matched if not right and not wide]
-    rights = [r for r, right, wide in matched if right]
+        return md
+    lefts = [m[0] for m in matched if m and not m[1] and not m[2]]
+    rights = [m[0] for m in matched if m and m[1]]
     if len(lefts) < 3 or len(rights) < 3:
         return md  # 不像双栏
     if max(r.x1 for r in lefts) > min(r.x0 for r in rights) + 5:
@@ -379,15 +403,38 @@ def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) ->
     return refs, final_regions
 
 
-def _insert_figures(md: str, refs: list[str]) -> str:
-    """把图快照引用插回 markdown（caption 锚定，v1 启发式）：
+# 插图锚点专用（2026-09-07 收紧）：caption 在编号后必带冒号/句点。
+# _FIG_CAPTION 不带标点要求，正文里 "Table 4 illustrates ..." 这类普通
+# 段落也会命中，快照被插进正文中间（DALK p7 实测：Table 4 快照插在
+# "Table 4 illustrates" 段前、Figure 3 快照配错 caption）
+_INSERT_ANCHOR = re.compile(
+    r"^\s*(?:Figure|Fig\.?|Tab\.?|Table|图|表)\s*\d+\s*[:：.]",
+    re.IGNORECASE | re.MULTILINE,
+)
 
-    学术惯例 caption 紧跟图的下方——第 k 个快照（按页面 y 序）插到
-    markdown 中第 k 个 caption 行之前，即「图在上、caption 在下」。
-    caption 数不足时，多余快照追加到页末。"""
+
+def _insert_figures(
+    md: str, refs: list[str], snap_regions: list | None = None,
+    raw_blocks: list | None = None,
+) -> str:
+    """把图快照引用插回 markdown（caption 锚定）。
+
+    v2（2026-09-07）：几何配对。序号配对「第 k 快照（页面 y 序）↔ 第 k
+    caption（markdown 序）」在两栏页上必错——caption 可能在表格上方，
+    且 y 带交错输出会让 caption 的 markdown 序与快照 y 序不一致
+    （DALK p7 实测：快照序 tab→fig→tab，caption 序 Table3→Table4→Figure3，
+    Figure 3 的图配到了 Table 4 caption 旁）。改为用 raw_blocks 里 caption
+    块的坐标与快照区域做「垂直贴近 + 水平重叠」就近匹配，再按 caption
+    文本在 markdown 中定位插入点。无几何信息时退回 v1 序号配对。
+    """
     if not refs:
         return md
-    marks = [m.start() for m in _FIG_CAPTION.finditer(md)]
+    if snap_regions and raw_blocks:
+        out = _insert_figures_geo(md, refs, snap_regions, raw_blocks)
+        if out is not None:
+            return out
+        # 几何配对完全失败（找不到任何 caption 块）→ 退回 v1 序号配对
+    marks = [m.start() for m in _INSERT_ANCHOR.finditer(md)]
     # 从后往前插，避免位移
     for k in range(len(refs) - 1, -1, -1):
         ref = f"\n\n{refs[k]}\n\n"
@@ -397,6 +444,87 @@ def _insert_figures(md: str, refs: list[str]) -> str:
         else:
             md = md.rstrip("\n") + "\n\n" + refs[k] + "\n"
     return md
+
+
+# 快照与 caption 的最大垂直距离（pt）：caption 紧贴其图表（上/下），
+# 超过这个距离基本是别的栏/别的图表的 caption
+_FIG_CAP_GAP = 80.0
+
+
+def _insert_figures_geo(
+    md: str, refs: list[str], snap_regions: list, raw_blocks: list
+) -> str | None:
+    """几何配对插入。返回 None 表示一个 caption 块都没找到（调用方退回 v1）。"""
+    # 1) caption 候选（raw_blocks 中命中锚点正则的块，带坐标）
+    caps: list[tuple[pymupdf.Rect, str]] = []
+    for b in raw_blocks:
+        text = (b[4] or "").strip() if len(b) > 4 else ""
+        if text and _INSERT_ANCHOR.match(text):
+            caps.append((pymupdf.Rect(b[:4]), text))
+    if not caps:
+        return None
+    # 2) 每个快照找最近 caption（垂直贴近 + 水平重叠，一对一贪心）
+    pairs: list[tuple[int, int]] = []  # (快照序 k, caption 序 c)
+    used: set[int] = set()
+    for k, r in enumerate(snap_regions[: len(refs)]):
+        best, best_gap = None, None
+        for c, (cr, _) in enumerate(caps):
+            if c in used:
+                continue
+            overlap = min(r.x1, cr.x1) - max(r.x0, cr.x0)
+            if overlap <= 0.3 * max(min(cr.width, r.width), 1.0):
+                continue  # 不同栏，垂直再近也不配
+            if cr.y1 <= r.y0:  # caption 在区域上方（表）
+                gap = r.y0 - cr.y1
+            elif cr.y0 >= r.y1:  # caption 在区域下方（图）
+                gap = cr.y0 - r.y1
+            else:
+                gap = 0.0  # 有纵向重叠（caption 被区域包住）
+            if gap > _FIG_CAP_GAP:
+                continue
+            if best_gap is None or gap < best_gap:
+                best, best_gap = c, gap
+        if best is not None:
+            used.add(best)
+            pairs.append((k, best))
+    # 3) caption 文本 → markdown 段落定位（归一化前缀互为前缀）
+    inserts: list[tuple[int, str]] = []  # (md 偏移, ref)
+    matched_ks: set[int] = set()
+    for k, c in pairs:
+        cnorm = _md_norm(caps[c][1])
+        if not cnorm:
+            continue
+        pos = _find_para_pos(md, cnorm)
+        if pos is not None:
+            inserts.append((pos, refs[k]))
+            matched_ks.add(k)
+    # 4) 未配到 caption 的快照：追加页末（v1 行为）
+    for k in range(len(refs)):
+        if k not in matched_ks:
+            md = md.rstrip("\n") + "\n\n" + refs[k] + "\n"
+    # 5) 从后往前插，避免位移
+    for pos, ref in sorted(inserts, key=lambda t: -t[0]):
+        md = md[:pos] + f"\n\n{ref}\n\n" + md[pos:]
+    return md
+
+
+def _find_para_pos(md: str, cnorm: str) -> int | None:
+    """在 markdown 中找与 caption 文本归一化后互含的段落，返回段首偏移。
+
+    切段方式与 _column_reading_order 一致（\\n\\s*\\n），24 字符前缀互含
+    容忍粗体标记/换行差异，同时不会误配 "Table 4 illustrates ..." 正文。"""
+    pos = 0
+    for para in re.split(r"(\n\s*\n)", md):
+        if not re.fullmatch(r"\n\s*\n", para or ""):
+            body = para.strip()
+            if body:
+                pn = _md_norm(body)
+                if pn and (
+                    pn.startswith(cnorm[:24]) or cnorm.startswith(pn[:24])
+                ):
+                    return pos + (len(para) - len(para.lstrip()))
+        pos += len(para)
+    return None
 
 
 def _normalize_image_refs(md: str, image_dir: str) -> str:
@@ -486,12 +614,16 @@ def extract_pages(
             md = (c.get("text") or "").strip()
             if md:
                 md = _clean_html(md)
-                # 列感知重排（双栏页 左栏→右栏），必须在插图锚定前做——
-                # caption 段落的位置会因重排移动
-                md = _column_reading_order(raw_blocks, md)
                 if image_dir:
                     md = _normalize_image_refs(md, image_dir)
-                    md = _insert_figures(md, refs)
+                    # 先锚定插图（此时 markdown 仍是页面 y 带顺序），再列重排。
+                    # v2 几何配对：用 caption 块坐标就近匹配快照区域，
+                    # 序号配对在两栏页上会把图配错 caption（DALK p7 实测）
+                    md = _insert_figures(
+                        md, refs, snap_regions=snap_regions, raw_blocks=raw_blocks
+                    )
+                # 列重排：图片引用段跟随其 caption 同进同退
+                md = _column_reading_order(raw_blocks, md)
             # 有快照的页即使文字变短也算有效文本层（文字进了图，不回退 OCR）
             out.append(md if (len(md) >= MIN_TEXT_CHARS or refs) else None)
         return out

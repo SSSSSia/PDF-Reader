@@ -42,7 +42,10 @@ MAX_CONCURRENCY = 8
 # v12：双栏页列感知阅读顺序重排（左栏→右栏；用户反馈"原文不全"：
 #      pymupdf4llm 按 y 带交错输出，段落续文被排离原段且页末脚注挡住
 #      旧版跨页合并），markdown 段落顺序变化。
-TEXT_LAYER_MODEL = "text-layer-v12"
+# v13：插图锚定收紧（caption 须带标点，正文 "Table 4 illustrates" 不再
+#      误当锚点）且改在列重排**前**执行（重排打乱第 k↔第 k 配对，实测
+#      Figure 3 快照配到 Table 4 caption），图片段随 caption 一起重排。
+TEXT_LAYER_MODEL = "text-layer-v14"
 
 # 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
 # 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。
@@ -152,12 +155,22 @@ def _split_page(page: dict) -> dict:
 # 首块」，但页末常是脚注/页眉等结构性块，真正被切断的段落在中间，永远
 # 轮不到合并（DALK 首页实测）；跨栏切分（左栏底→右栏顶）同理。
 # 升级为对整个文档块序列做续段合并：
-#   A 未完结（末尾无终止符）时，向后跳过结构性块（脚注/标题/图表，≤4 个）
-#   找合并目标。目标满足其一才合并：小写开头（跨页续文最常见形态）；
-#   A 以连字符结尾且目标小写连读（断词跨边界）；A 以虚词结尾且目标大写
-#   开头（"rich sources of | AD knowledge" 形态）。合并归属 A 的页。
+#   A 未完结（末尾无终止符）时，向后跳过「可跳结构块」（图表快照/caption/
+#   脚注/表格行/列表，≤8 个）找合并目标；章节标题（# ##）是硬边界——
+#   跨过标题续接几乎必错，遇到即放弃。目标满足其一才合并：小写开头
+#   （跨页续文最常见形态）；A 以连字符结尾且目标小写连读（断词跨边界）；
+#   A 以虚词结尾且目标大写开头（"rich sources of | AD knowledge" 形态）。
+#   合并归属 A 的页。
+# caption（"Table 5: ..."）必须带标点才判结构块——"Table 4 illustrates"
+# 是正文段落（DALK 实测），不能误伤。
 _BLOCK_TERMINAL = tuple(".!?:。！？：；;\"')]）】")
-_STRUCT_START = re.compile(r"^(#{1,6}\s|\||!\[|[-*+]\s|\d+[.)]\s|>)")
+_STRUCT_START = re.compile(
+    r"^(#{1,6}\s|\||!\[|[-*+]\s|\d+[.)]\s|>"
+    r"|(?:Figure|Fig\.?|Tab\.?|Table|图|表)\s*\d+\s*[:：.])",
+    re.IGNORECASE,
+)
+_SKIP_STOP = re.compile(r"^#{1,2}\s")  # 章节标题：合并的硬边界
+_MERGE_SKIP_MAX = 8  # 最多跳过的结构块数（图表密集页实测需 4+）
 # 英文虚词结尾 = 句子被拦腰切断的强信号（介词/冠词/连词/限定词收尾）
 _FUNCTION_TAIL = re.compile(
     r"\b(of|the|and|in|to|a|an|for|with|on|by|at|from|or|as|its|their|his|her|"
@@ -169,7 +182,7 @@ _FUNCTION_TAIL = re.compile(
 
 
 def _is_plain(t: str) -> bool:
-    """可参与续段合并的正文块：非图片、非结构块（标题/列表/表格/脚注）。"""
+    """可参与续段合并的正文块：非图片、非结构块（标题/列表/表格/caption/脚注）。"""
     return bool(t) and not _PURE_IMAGE.match(t) and not _STRUCT_START.match(t)
 
 
@@ -185,13 +198,18 @@ def _merge_cross_page(pages: list) -> list:
         if not _is_plain(o1) or o1.endswith(_BLOCK_TERMINAL):
             i += 1
             continue
-        # 向后找合并目标：结构性块（脚注/标题等）透明跳过，最多 4 个
+        # 向后找合并目标：可跳结构块（图表/caption/脚注等）透明越过，
+        # 章节标题 = 硬边界（跨标题续接必错，放弃 A），最多跳 8 个
         j = i + 1
-        while j < len(seq) and not _is_plain(
-            (seq[j][1].get("original") or "").strip()
-        ):
+        while j < len(seq):
+            oj = (seq[j][1].get("original") or "").strip()
+            if _is_plain(oj):
+                break
+            if _SKIP_STOP.match(oj) or j - i > _MERGE_SKIP_MAX:
+                j = len(seq)  # 硬边界或跳太远：放弃
+                break
             j += 1
-        if j >= len(seq) or j - i > 5:
+        if j >= len(seq):
             i += 1
             continue
         o2 = (seq[j][1].get("original") or "").strip()

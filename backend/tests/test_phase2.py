@@ -359,39 +359,51 @@ def test_no_merge_nonfunction_tail_uppercase():
 
 
 def test_chain_merge_until_terminal():
-    # A 合并后仍未完结 → 继续向后合并（连环续段）
+    # A 合并后仍未完结 → 继续向后合并（连环续段）；中间图表标题块透明越过
     pages = [
-        _page(0, [_blk(0, "the method relies on two"), _blk(0, "## heading")]),
-        _page(1, [_blk(1, "key components: retrieval and ranking.")]),
+        _page(0, [
+            _blk(0, "the method relies on two"),
+            _blk(0, "Figure 2: overall framework."),
+        ]),
+        _page(1, [
+            _blk(1, "key components: retrieval and"),
+            _blk(1, "ranking."),
+        ]),
     ]
     out = _merge_cross_page(pages)
     assert out[0]["blocks"][0]["original"] == "the method relies on two key components: retrieval and ranking."
+    # 图表标题块原样保留
+    assert out[0]["blocks"][1]["original"].startswith("Figure 2")
 
 
-# ── 页眉/页脚固定文案过滤（跨页合并误吸页脚的根治）──────────────────
+def test_merge_skips_caption_to_find_target():
+    # 段落被图表打断（用户实测：大部分截断由图表块引起）：caption 属结构块，
+    # 透明越过找到真正的续文
+    pages = [
+        _page(0, [
+            _blk(0, "while the knowledge ranked behind is not very"),
+            _blk(0, "Figure 3: performance comparison."),
+            _blk(0, "useful, thus successfully validating our hypothesis."),
+        ]),
+    ]
+    out = _merge_cross_page(pages)
+    assert len(out[0]["blocks"]) == 2
+    assert out[0]["blocks"][0]["original"].endswith("validating our hypothesis.")
+    assert out[0]["blocks"][1]["original"].startswith("Figure 3")
 
 
-def test_conference_footer_dropped():
-    from ocr.siliconflow import split_into_blocks
-    text = (
-        "Given a question, ToG leverages the underlying LLM to localize\n"
-        "the initial entity of the reasoning paths.\n\n"
-        "Published as a conference paper at ICLR 2024"
-    )
-    blocks = split_into_blocks(text)
-    assert len(blocks) == 1
-    assert "ICLR" not in blocks[0]
-
-
-def test_body_text_mentioning_footers_kept():
-    from ocr.siliconflow import split_into_blocks
-    para = (
-        "All baselines were published as a conference paper at ICLR 2024 or "
-        "later, and we compare against them on five benchmarks with full "
-        "reproduction of their reported settings and hyperparameters."
-    )
-    blocks = split_into_blocks(para)
-    assert len(blocks) == 1  # 长正文不受页脚过滤影响
+def test_merge_stops_before_heading():
+    # 章节标题 = 硬边界：残段绝不跨标题吸收下一节内容
+    pages = [
+        _page(0, [
+            _blk(0, "this method still has some limitations"),
+            _blk(0, "## Conclusion"),
+            _blk(0, "In this paper, we proposed a novel framework."),
+        ]),
+    ]
+    out = _merge_cross_page(pages)
+    assert out[0]["blocks"][0]["original"] == "this method still has some limitations"
+    assert len(out[0]["blocks"]) == 3
 
 
 # ── 页眉/页脚固定文案过滤（跨页合并误吸页脚的根治）──────────────────

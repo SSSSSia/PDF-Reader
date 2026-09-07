@@ -430,3 +430,55 @@ def test_body_text_mentioning_footers_kept():
     )
     blocks = split_into_blocks(para)
     assert len(blocks) == 1  # 长正文不受页脚过滤影响
+
+
+# ── ACM/期刊版式页眉页脚家具块过滤（Survey 实测，2026-09-07）──────────
+
+
+def test_acm_journal_footer_filtered():
+    from ocr.siliconflow import split_into_blocks
+    text = (
+        "GraphRAG retrieves structured knowledge from graphs.\n\n"
+        "J. ACM, Vol. 37, No. 4, Article 111. Publication date: September 2024."
+    )
+    blocks = split_into_blocks(text)
+    assert len(blocks) == 1
+    assert "J. ACM" not in blocks[0]
+
+
+def test_running_head_and_page_number_filtered():
+    from ocr.siliconflow import split_into_blocks
+    text = "Peng et al.\n\n111:2\n\nBody paragraph stays intact."
+    blocks = split_into_blocks(text)
+    assert blocks == ["Body paragraph stays intact."]
+
+
+def test_reference_with_initials_et_al_kept():
+    from ocr.siliconflow import split_into_blocks
+    ref = "Smith J, et al."
+    blocks = split_into_blocks(ref)
+    assert blocks == [ref]  # 带逗号/缩写的引用条目不是页眉作者行，不得误杀
+
+
+# ── 列表项跨页续段（Survey 实测：贡献列表段落跨页续写）────────────────
+
+
+def test_merge_list_item_continuation():
+    # A 是列表项且以虚词收尾：可作为合并源，续文次页小写开头
+    pages = [
+        _page(
+            0,
+            [
+                _blk(
+                    0,
+                    "- We delineate downstream tasks, benchmarks and applications, discussing both",
+                )
+            ],
+        ),
+        _page(1, [_blk(1, "the progress and prospects of this field.")]),
+    ]
+    out = _merge_cross_page(pages)
+    assert out[0]["blocks"][0]["original"] == (
+        "- We delineate downstream tasks, benchmarks and applications, "
+        "discussing both the progress and prospects of this field."
+    )

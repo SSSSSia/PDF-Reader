@@ -171,6 +171,10 @@ _STRUCT_START = re.compile(
 )
 _SKIP_STOP = re.compile(r"^#{1,2}\s")  # 章节标题：合并的硬边界
 _MERGE_SKIP_MAX = 8  # 最多跳过的结构块数（图表密集页实测需 4+）
+# 列表项可作为合并源（不能当合并目标）：Survey 实测列表项段落跨页续写
+# （"- We delineate ... discussing both" + 次页 "the progress and ..."），
+# 一刀切排除会让列表项永远残缺
+_LIST_ITEM = re.compile(r"^[-*+]\s")
 # 英文虚词结尾 = 句子被拦腰切断的强信号（介词/冠词/连词/限定词收尾）
 _FUNCTION_TAIL = re.compile(
     r"\b(of|the|and|in|to|a|an|for|with|on|by|at|from|or|as|its|their|his|her|"
@@ -195,7 +199,10 @@ def _merge_cross_page(pages: list) -> list:
     i = 0
     while i < len(seq):
         o1 = (seq[i][1].get("original") or "").strip()
-        if not _is_plain(o1) or o1.endswith(_BLOCK_TERMINAL):
+        if (
+            (not _is_plain(o1) and not _LIST_ITEM.match(o1))
+            or o1.endswith(_BLOCK_TERMINAL)
+        ):
             i += 1
             continue
         # 向后找合并目标：可跳结构块（图表/caption/脚注等）透明越过，
@@ -353,6 +360,29 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         # 把每页「整块 markdown」切成段/句级 block（对照粒度，见决策），
         # 切块发生在 OCR 缓存读取之后，因此不动 OCR 缓存粒度。
         pages = [_split_page(p) for p in pages]
+        # 论文标题（首个 # 标题块）提前到合并前提取：页眉运行标题剔除
+        # 必须发生在合并之前，防止裸标题行被当成续段合并目标误接
+        doc_title = ""
+        for page in pages:
+            for block in page["blocks"]:
+                m = re.match(r"^#\s+(.{4,120})$", (block.get("original") or "").strip())
+                if m:
+                    doc_title = m.group(1).strip()
+                    break
+            if doc_title:
+                break
+        # 页眉运行标题（ACM/期刊版式每页重复的裸标题行，Survey 实测每页
+        # 一块、还被模型回声成"假译文"）：与文档标题相同的块剔除。
+        # 真标题块带 "# " 前缀不受影响；比对时去掉 markdown 强调符
+        # （标题块是 "# **Title**" 而页眉是裸文本）
+        if doc_title:
+            dt_cmp = doc_title.replace("*", "").strip()
+            for page in pages:
+                page["blocks"] = [
+                    b
+                    for b in page["blocks"]
+                    if (b.get("original") or "").strip().replace("*", "") != dt_cmp
+                ]
         # 跨页段落合并（阶段2-T3）：紧跟模式不再把跨页同段显示成两块残文
         pages = _merge_cross_page(pages)
         job["progress"] = 30
@@ -370,15 +400,9 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         glossary = await build_glossary(pages, t_cfg, settings.cache_dir, pdf_hash)
         if glossary:
             t_cfg["glossary"] = glossary
-        # 论文标题（第 0 页首个 # 标题）随术语表一起注入提示词
-        for page in pages:
-            for block in page["blocks"]:
-                m = re.match(r"^#\s+(.{4,120})$", (block.get("original") or "").strip())
-                if m:
-                    t_cfg["doc_title"] = m.group(1).strip()
-                    break
-            if "doc_title" in t_cfg:
-                break
+        # 论文标题随术语表一起注入提示词（合并前已提取）
+        if doc_title:
+            t_cfg["doc_title"] = doc_title
 
         # 先收集所有需要翻译的 block（跳过空白、纯图片与已缓存的）
         pending: list[tuple] = []  # (page, block, cache_key)
@@ -425,7 +449,15 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                     text_hash(original), target_lang, model, PROMPT_VERSION
                 )
                 cached = read_cache(settings.cache_dir, key)
-                if cached and cached.get("translated"):
+                if (
+                    cached
+                    and cached.get("translated")
+                    # 历史缓存中的回声条目视为未翻译：重新走翻译+补翻，
+                    # 避免英文原文被当译文常年展示（2026-09-07 修复）
+                    and not sanitize.is_echo(
+                        original, cached["translated"], target_lang
+                    )
+                ):
                     block["translated"] = cached["translated"]
                     stats["tr_cache_hit"] += 1
                     stats["tr_total"] += 1
@@ -441,7 +473,7 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         # 提前挂载 pages：block 对象是引用，翻译过程中前端轮询即可渐进看到已完成的译文
         job["pages"] = pages
 
-        async def _translate_chunk(chunk: list[tuple]):
+        async def _translate_chunk(chunk: list[tuple], advance: bool = True):
             nonlocal done
             async with sem:
                 texts = [b["original"] for _, b, _ in chunk]
@@ -482,9 +514,23 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                             )
                         )
                     )
-                    write_cache(settings.cache_dir, key, {"translated": block["translated"]})
-                    done += 1
-                    job["progress"] = 30 + int(done / total * 70)
+                    # 回声（模型原样照抄原文）不落缓存：否则下轮缓存命中
+                    # 直接展示英文原文当译文，且永远绕过补翻（Survey 实测：
+                    # 参考文献整节回声落缓存，2026-09-07）
+                    if not sanitize.is_echo(
+                        block.get("original") or "",
+                        block["translated"],
+                        target_lang,
+                    ):
+                        write_cache(settings.cache_dir, key, {"translated": block["translated"]})
+                    if advance:
+                        done += 1
+                        # 钳制在 99：补翻等后置阶段不应把进度顶过 100
+                        # （用户实测"进度条卡出 100% 还在加"——补翻轮复用
+                        # 本函数把 done 二次累加所致，2026-09-07）
+                        job["progress"] = min(
+                            99, 30 + int(done / total * 70)
+                        )
 
         chunks = [
             pending[i : i + 10] for i in range(0, len(pending), 10)
@@ -523,9 +569,23 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
             )
             retry_chunks = [retry[i : i + 10] for i in range(0, len(retry), 10)]
             try:
-                await asyncio.gather(*[_translate_chunk(c) for c in retry_chunks])
+                # advance=False：补翻不计进度——否则 done 二次累加，
+                # 进度条冲破 100% 还持续上涨（用户实测，2026-09-07）
+                await asyncio.gather(
+                    *[_translate_chunk(c, advance=False) for c in retry_chunks]
+                )
             except Exception:
                 pass
+            # 补翻后仍是回声（参考文献等模型必然原样照抄的内容，重试也无解）：
+            # 清空译文保持"待翻译"状态——比拿英文原文冒充译文更诚实，
+            # 用户可用段落级手动翻译按钮重试
+            for _, block, _ in retry:
+                if sanitize.is_echo(
+                    block.get("original") or "",
+                    block.get("translated") or "",
+                    target_lang,
+                ):
+                    block["translated"] = ""
 
         # 译制图任务收尾：与文本翻译并发执行，文本翻完这里等它们落盘。
         # 任何一个失败只影响那一张图（block 停留在回退原图），不阻断。

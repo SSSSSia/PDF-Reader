@@ -61,7 +61,8 @@ export function useOcr() {
           )) as string;
           const status = JSON.parse(statusStr) as PipelineResult;
 
-          setProgress(status.progress ?? 0);
+          // 钳制兜底：后端进度理论上 ≤100，异常时不得撑破进度条
+          setProgress(Math.min(100, status.progress ?? 0));
 
           if (status.status === "unknown") {
             setError("任务已过期或后端已重启，请重新处理该文件");

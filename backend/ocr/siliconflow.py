@@ -163,20 +163,30 @@ async def _ocr_image(img_bytes: bytes, api_url: str, api_key: str, model: str) -
 # 切块发生在 OCR 缓存读取之后，因此改切块策略不影响缓存命中。
 
 # 页脚噪音（用户反馈"页码被翻译"，2026-09-06）：纯页码/罗马页码/Page N of N
+# 2026-09-07 增补 ACM 期刊页码 "111:2"（(Survey)Graph RAG 实测每页一块）
 _NOISE_BLOCK = re.compile(
-    r"^(?:\d{1,4}|[ivxlcdm]{1,8}|page\s*\d+(?:\s*(?:of|/)\s*\d+)?)$",
+    r"^(?:\d{1,4}|[ivxlcdm]{1,8}|page\s*\d+(?:\s*(?:of|/)\s*\d+)?|\d{1,4}:\d{1,3})$",
     re.IGNORECASE,
 )
+
+# 页眉作者行（ACM 版式页眉 "Peng et al."，2026-09-07 Survey 实测）：
+# 仅"单姓 + et al."的极短行才算——带逗号/缩写的引用条目（"Smith J, et al."）
+# 不匹配，防止误杀参考文献
+_RUNNING_HEAD = re.compile(r"^[A-Z][a-zA-Z\-']{1,20}\s+et\s+al\.?$")
 
 # 页眉/页脚固定文案（用户反馈"跨页合并把 'Published as a conference paper
 # at ICLR 2024' 吸进正文"，2026-09-07）：论文模板每页重复的出版声明/arXiv
 # 标识。短块 + 特征短语才判页脚——正文里讨论这些短语的整段不受影响。
+# 2026-09-07 增补 ACM 期刊页脚（"J. ACM, Vol. 37, No. 4, Article 111.
+# Publication date: September 2024."，Survey 每页重复，实测挡住跨页续段合并）
 _FOOTER_PAT = re.compile(
     r"published\s+as\s+a\s+conference\s+paper"
     r"|arxiv[:\s]*\d{4}\.\d{4,5}"
     r"|proceedings\s+of\s+the\s+\d{2,}"
     r"|all\s+rights\s+reserved"
-    r"|©\s*\d{4}",
+    r"|©\s*\d{4}"
+    r"|j\.\s*[a-z]{2,10},\s*vol\.\s*\d+"
+    r"|publication\s+date\s*:",
     re.IGNORECASE,
 )
 _FOOTER_MAX_CHARS = 140
@@ -192,5 +202,6 @@ def split_into_blocks(text: str) -> list[str]:
         b
         for b in blocks
         if not _NOISE_BLOCK.match(re.sub(r"\s+", "", b))
+        and not (len(b) < 60 and _RUNNING_HEAD.match(b))
         and not (len(b) < _FOOTER_MAX_CHARS and _FOOTER_PAT.search(b))
     ]

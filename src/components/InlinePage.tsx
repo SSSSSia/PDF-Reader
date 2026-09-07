@@ -88,7 +88,7 @@ export default function InlinePage() {
                     <MarkdownText text={b.original} />
                   </div>
                   {b.translated && (
-                    <div className="mt-1.5 border-b border-dashed border-slate-300 pb-2 text-slate-600 dark:border-slate-600 dark:text-slate-300 paper-font text-justify">
+                    <div className="mt-1.5 border-b border-dashed border-slate-300 pb-2 text-blue-900 dark:border-slate-600 dark:text-blue-100 paper-font text-justify">
                       <MarkdownText text={b.translated} />
                     </div>
                   )}

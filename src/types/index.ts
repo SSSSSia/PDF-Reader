@@ -33,8 +33,12 @@ export interface TextBlock {
   translated: string;
   position: { y_start: number; y_end: number };
   /** 原版对照模式（阶段5-T1/D6）：PyMuPDF 页面坐标 [x0,y0,x1,y1]（pt，top-left 原点）；
-   *  前缀匹配失败（公式碎块/图内文字/扫描页）为 null/缺省 → 不渲染 overlay */
+   *  前缀匹配失败（公式碎块/图内文字/扫描页）为 null/缺省 → 不渲染 overlay。
+   *  恒等于 bboxes 首段（兼容旧消费方） */
   bbox?: [number, number, number, number] | null;
+  /** 多段坐标（断栏续接/跨页合并/作者行多段）：全部命中分段，page 为段所在页；
+   *  缺省/空数组时回退用 bbox（挂在块所属页） */
+  bboxes?: { page: number; bbox: [number, number, number, number] }[] | null;
 }
 
 export interface PageResult {

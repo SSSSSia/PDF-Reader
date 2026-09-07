@@ -108,3 +108,46 @@ def test_bbox_merged_block_uses_source_head(tmp_path):
     ]
     attach_block_bboxes(path, pages)
     assert pages[0]["blocks"][0]["bbox"] is not None
+
+
+def test_bbox_glued_multiblock_paragraph(tmp_path):
+    """同页粘合段：一个逻辑块由两个原始块拼成 → 两段坐标，bbox=首段。"""
+    t1 = "The first physical piece of a glued paragraph ends without stop"
+    t2 = "and the second physical piece continues the very same sentence here"
+    path = _make_pdf(tmp_path, [[t1, t2]])
+    pages = [{"page": 0, "blocks": [{"original": t1 + " " + t2}]}]
+    attach_block_bboxes(path, pages)
+    b = pages[0]["blocks"][0]
+    assert b["bbox"] is not None
+    assert len(b["bboxes"]) == 2
+    assert all(s["page"] == 0 for s in b["bboxes"])
+    assert b["bboxes"][0]["bbox"] == b["bbox"]
+    # 两段上下排布：第二段 y0 在第一段之后
+    assert b["bboxes"][1]["bbox"][1] > b["bboxes"][0]["bbox"][1]
+
+
+def test_bbox_cross_page_continuation_segment(tmp_path):
+    """跨页合并块：续段坐标挂在下一页，bboxes 覆盖两页。"""
+    a_text = "Cross page sentence starts here and continues"
+    b_text = "on the next page the sentence keeps going for a while"
+    path = _make_pdf(tmp_path, [[a_text], [b_text]])
+    pages = [
+        {"page": 0, "blocks": [{"original": a_text + " " + b_text}]},
+        {"page": 1, "blocks": []},
+    ]
+    attach_block_bboxes(path, pages)
+    b = pages[0]["blocks"][0]
+    assert [s["page"] for s in b["bboxes"]] == [0, 1]
+    assert b["bbox"] == b["bboxes"][0]["bbox"]
+
+
+def test_bbox_unmatched_has_empty_bboxes(tmp_path):
+    """未命中块：bbox=None 且 bboxes 为空（前端不渲染 overlay）。"""
+    path = _make_pdf(tmp_path, [["Real text layer content lives here."]])
+    pages = [
+        {"page": 0, "blocks": [{"original": "This sentence is not in the pdf."}]}
+    ]
+    attach_block_bboxes(path, pages)
+    b = pages[0]["blocks"][0]
+    assert b["bbox"] is None
+    assert b["bboxes"] == []

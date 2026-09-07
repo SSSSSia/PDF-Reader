@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as pdfjsLib from "pdfjs-dist";
 // Vite 把 worker 作为本地资源打包（与 usePdfThumbnails 同一约定；重复赋值 workerSrc 幂等）
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -11,11 +11,14 @@ import type { PageResult, TextBlock } from "../types";
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
 type BBox = [number, number, number, number];
+type BBoxSeg = { page: number; bbox: BBox };
+type Overlay = { block: TextBlock; bb: BBox };
 type PageLayout = { scale: number; w: number; h: number };
 
 /**
  * 原版对照模式（阶段5-T3，D6 立项）：pdfjs 原样渲染 PDF 页面（公式/图表/
- * 双栏版式零损失），已译块按 bbox 高亮，点击浮层查看原文+译文。
+ * 双栏版式零损失），已译块按多段 bbox 高亮（断栏/跨页续段各自所在页都
+ * 有高亮），点击浮层查看译文。
  *
  * 设计要点（Spike 实测依据见 docs/阶段4-原生渲染路线评估.md §4.1）：
  * - 连续滚动逐页懒渲染：IntersectionObserver(rootMargin 600px) 触发，
@@ -78,6 +81,29 @@ export default function OriginalReader() {
   const stepZoom = (d: number) =>
     setZoom((z) => Math.min(3, Math.max(0.5, Math.round((z + d) * 100) / 100)));
 
+  // 每页 overlay 分段索引：一个逻辑块可有多段坐标（断栏/跨页合并），
+  // 跨页合并块的分段按 seg.page 挂到各自所在页（含续文页）
+  const overlaysByPage = useMemo(() => {
+    const m = new Map<number, Overlay[]>();
+    pages.forEach((p) =>
+      p.blocks.forEach((b) => {
+        const segs: BBoxSeg[] =
+          b.bboxes && b.bboxes.length
+            ? b.bboxes
+            : b.bbox
+              ? [{ page: p.page, bbox: b.bbox as BBox }]
+              : [];
+        segs.forEach((seg) => {
+          if (!seg?.bbox) return;
+          const arr = m.get(seg.page) ?? [];
+          arr.push({ block: b, bb: seg.bbox });
+          m.set(seg.page, arr);
+        });
+      })
+    );
+    return m;
+  }, [pages]);
+
   return (
     <div
       ref={wrapRef}
@@ -128,7 +154,7 @@ export default function OriginalReader() {
               key={p.page}
               pdf={pdf}
               pageNo={p.page + 1}
-              pageData={p}
+              overlays={overlaysByPage.get(p.page) ?? []}
               wrapW={wrapW}
               zoom={zoom}
             />
@@ -139,17 +165,17 @@ export default function OriginalReader() {
   );
 }
 
-/** 单页：懒渲染 canvas + bbox overlay + 译文浮层 */
+/** 单页：懒渲染 canvas + bbox overlay（多段）+ 译文浮层 */
 function OriginalPage({
   pdf,
   pageNo,
-  pageData,
+  overlays,
   wrapW,
   zoom,
 }: {
   pdf: any;
   pageNo: number;
-  pageData: PageResult;
+  overlays: Overlay[];
   wrapW: number;
   zoom: number;
 }) {
@@ -158,7 +184,9 @@ function OriginalPage({
   const [near, setNear] = useState(false);
   const [layout, setLayout] = useState<PageLayout | null>(null);
   const [rotated, setRotated] = useState(false);
-  const [selected, setSelected] = useState<TextBlock | null>(null);
+  const [selected, setSelected] = useState<{ block: TextBlock; bb: BBox } | null>(
+    null
+  );
 
   // 接近视口才启动渲染（懒加载，长文档滚动不卡）
   useEffect(() => {
@@ -227,19 +255,20 @@ function OriginalPage({
 
         {layout && !rotated && (
           <div className="absolute inset-0">
-            {pageData.blocks.map((b) => {
-              const bb = b.bbox as BBox | null | undefined;
-              if (!bb) return null;
+            {overlays.map((o, i) => {
+              const bb = o.bb;
               const s = layout.scale;
-              const has = !!b.translated;
+              const has = !!o.block.translated;
               return (
                 <div
-                  key={b.block_id}
+                  key={`${o.block.block_id}-${i}`}
                   role="button"
                   tabIndex={0}
                   onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => setSelected(b)}
-                  onKeyDown={(e) => e.key === "Enter" && setSelected(b)}
+                  onClick={() => setSelected({ block: o.block, bb })}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && setSelected({ block: o.block, bb })
+                  }
                   className={`absolute rounded-[3px] transition-colors duration-100 ${
                     has
                       ? "cursor-pointer bg-blue-500/10 hover:bg-blue-500/30"
@@ -256,9 +285,10 @@ function OriginalPage({
               );
             })}
 
-            {selected && (selected.bbox as BBox | null | undefined) && (
+            {selected && (
               <BlockCard
-                block={selected}
+                block={selected.block}
+                bb={selected.bb}
                 layout={layout}
                 onClose={() => setSelected(null)}
               />
@@ -279,17 +309,18 @@ function OriginalPage({
   );
 }
 
-/** 译文浮层：优先贴块下方，空间不足翻到上方（钳制在页内） */
+/** 译文浮层：只显示译文（用户反馈 2026-09-07），优先贴块下方，空间不足翻到上方 */
 function BlockCard({
   block,
+  bb,
   layout,
   onClose,
 }: {
   block: TextBlock;
+  bb: BBox;
   layout: PageLayout;
   onClose: () => void;
 }) {
-  const bb = block.bbox as BBox;
   const s = layout.scale;
   const cardW = Math.min(380, Math.max(260, layout.w * 0.45));
   const left = Math.min(Math.max(4, bb[0] * s), Math.max(4, layout.w - cardW - 4));
@@ -317,10 +348,7 @@ function BlockCard({
           </button>
         </div>
       </div>
-      <div className="max-h-28 overflow-y-auto text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-        <MarkdownText text={block.original} />
-      </div>
-      <div className="mt-2 max-h-60 overflow-y-auto border-t border-dashed border-slate-200 pt-2 text-sm leading-relaxed text-slate-900 dark:border-slate-700 dark:text-slate-100">
+      <div className="max-h-72 overflow-y-auto text-sm leading-relaxed text-slate-900 dark:text-slate-100">
         {block.translated ? (
           <MarkdownText text={block.translated} />
         ) : (

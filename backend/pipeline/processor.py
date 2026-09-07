@@ -39,7 +39,10 @@ MAX_CONCURRENCY = 8
 # v10：快照区域外扩 3pt（表格右缘数字被裁，HippoRAG Table 5 实测），快照内容变化。
 # v11：表格快照吸收上方表头行且 redact 与快照同区域（表头在正文残留被
 #      pymupdf4llm 再识别成小 markdown 表格，用户看到"表头翻译两遍"）。
-TEXT_LAYER_MODEL = "text-layer-v11"
+# v12：双栏页列感知阅读顺序重排（左栏→右栏；用户反馈"原文不全"：
+#      pymupdf4llm 按 y 带交错输出，段落续文被排离原段且页末脚注挡住
+#      旧版跨页合并），markdown 段落顺序变化。
+TEXT_LAYER_MODEL = "text-layer-v12"
 
 # 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
 # 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。
@@ -144,44 +147,71 @@ def _split_page(page: dict) -> dict:
     return {"page": page["page"], "blocks": blocks}
 
 
-# ── 跨页段落合并（阶段2-T3）──────────────────────────────────────────
-# _split_page 按页切块 → 跨页段落被切成两块，紧跟模式同段显示两次残文。
-# 保守规则：前页末 block 不以终止符结尾 且 后页首 block 不以结构标记开头
-# → 合并，归属前页。误合并靠日志回查。
+# ── 跨页/跨栏段落续接合并（阶段2-T3，2026-09-07 升级）────────────────
+# 块切分按页/栏边界切断段落 → 残文两处显示。旧版只合并「前页末块+后页
+# 首块」，但页末常是脚注/页眉等结构性块，真正被切断的段落在中间，永远
+# 轮不到合并（DALK 首页实测）；跨栏切分（左栏底→右栏顶）同理。
+# 升级为对整个文档块序列做续段合并：
+#   A 未完结（末尾无终止符）时，向后跳过结构性块（脚注/标题/图表，≤4 个）
+#   找合并目标。目标满足其一才合并：小写开头（跨页续文最常见形态）；
+#   A 以连字符结尾且目标小写连读（断词跨边界）；A 以虚词结尾且目标大写
+#   开头（"rich sources of | AD knowledge" 形态）。合并归属 A 的页。
 _BLOCK_TERMINAL = tuple(".!?:。！？：；;\"')]）】")
 _STRUCT_START = re.compile(r"^(#{1,6}\s|\||!\[|[-*+]\s|\d+[.)]\s|>)")
+# 英文虚词结尾 = 句子被拦腰切断的强信号（介词/冠词/连词/限定词收尾）
+_FUNCTION_TAIL = re.compile(
+    r"\b(of|the|and|in|to|a|an|for|with|on|by|at|from|or|as|its|their|his|her|"
+    r"our|these|those|this|that|which|who|whose|whom|also|be|is|are|was|were|"
+    r"been|than|then|into|over|under|between|through|during|without|within|"
+    r"along|across|after|before|above|below|about|when|while|but)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_plain(t: str) -> bool:
+    """可参与续段合并的正文块：非图片、非结构块（标题/列表/表格/脚注）。"""
+    return bool(t) and not _PURE_IMAGE.match(t) and not _STRUCT_START.match(t)
 
 
 def _merge_cross_page(pages: list) -> list:
-    """跨页段落合并（原地修改 pages，返回同一引用）。"""
-    for i in range(len(pages) - 1):
-        b1, b2 = pages[i].get("blocks", []), pages[i + 1].get("blocks", [])
-        if not b1 or not b2:
+    """全文续段合并（原地修改 pages，返回同一引用）。"""
+    # 平铺序列持有引用：合并 = A 追加目标文本 + 目标从所属页移除
+    seq: list[tuple[dict, dict]] = [
+        (pg, b) for pg in pages for b in pg.get("blocks", [])
+    ]
+    i = 0
+    while i < len(seq):
+        o1 = (seq[i][1].get("original") or "").strip()
+        if not _is_plain(o1) or o1.endswith(_BLOCK_TERMINAL):
+            i += 1
             continue
-        last, first = b1[-1], b2[0]
-        o1 = (last.get("original") or "").strip()
-        o2 = (first.get("original") or "").strip()
-        if not o1 or not o2:
+        # 向后找合并目标：结构性块（脚注/标题等）透明跳过，最多 4 个
+        j = i + 1
+        while j < len(seq) and not _is_plain(
+            (seq[j][1].get("original") or "").strip()
+        ):
+            j += 1
+        if j >= len(seq) or j - i > 5:
+            i += 1
             continue
-        # 任一侧是图表块/标题块不合并；前段已完结句不合并；后段是结构块不合并
-        if _PURE_IMAGE.match(o1) or _PURE_IMAGE.match(o2):
-            continue
-        if o1.startswith("#") or o1.endswith("---"):
-            continue
-        if o1.endswith(_BLOCK_TERMINAL):
-            continue
-        if _STRUCT_START.match(o2):
-            continue
-        # 英文断词跨页（句末是连字符）直接拼接，否则空格连接
+        o2 = (seq[j][1].get("original") or "").strip()
         if o1.endswith("-"):
-            merged = o1[:-1] + o2
+            joinable = bool(re.match(r"^[a-z]", o2))  # 断词只接小写连读
+        elif re.match(r"^[a-z]", o2):
+            joinable = True
         else:
-            merged = o1 + " " + o2
-        last["original"] = merged
-        b2.pop(0)
-        print(
-            f"[merge] 跨页段落合并: p{pages[i]['page'] + 1}→p{pages[i + 1]['page'] + 1}"
-        )
+            joinable = bool(re.match(r"^[A-Z]", o2)) and bool(
+                _FUNCTION_TAIL.search(o1)
+            )
+        if not joinable:
+            i += 1
+            continue
+        merged = (o1[:-1] + o2) if o1.endswith("-") else (o1 + " " + o2)
+        seq[i][1]["original"] = merged
+        pg_b, b_b = seq[j]
+        pg_b["blocks"].remove(b_b)
+        seq.pop(j)
+        # 不 i+=1：合并后 A 仍可能未完结（连环续段），下一轮继续找
     return pages
 
 

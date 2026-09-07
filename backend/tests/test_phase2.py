@@ -252,6 +252,71 @@ def test_hyphenated_word_joined():
     assert out[0]["blocks"][-1]["original"] == "the representation power of graphs"
 
 
+# ── 全文续段合并升级（2026-09-07）：跳过结构性块找目标 ────────────────
+# 旧版只看「前页末块+后页首块」，页末脚注会挡住真正被切断的段落
+# （DALK 首页实测：脚注在页末，续文在中间或跨栏）。
+
+
+def test_merge_skips_footnotes_to_find_target():
+    pages = [
+        _page(0, [
+            _blk(0, "biomedical databases could supply rich sources of"),
+            _blk(0, "> * Equal Constributions"),
+            _blk(0, "> † Corresponding authors"),
+            _blk(0, "AD knowledge, manual review of relevant information is impossible due to the large volume."),
+        ]),
+    ]
+    out = _merge_cross_page(pages)
+    assert len(out[0]["blocks"]) == 3
+    assert out[0]["blocks"][0]["original"].endswith("the large volume.")
+    # 脚注原样保留
+    assert all(b["original"].startswith(">") for b in out[0]["blocks"][1:])
+
+
+def test_merge_skips_page_boundary_and_heading():
+    # 截断层后隔着脚注+翻页：目标在下一页
+    pages = [
+        _page(0, [
+            _blk(0, "This efficiency issue would also limit"),
+            _blk(0, "> * footnote"),
+        ]),
+        _page(1, [_blk(1, "the sizes of domain-specific LLMs, consequently affecting their performances.")]),
+    ]
+    out = _merge_cross_page(pages)
+    assert out[0]["blocks"][0]["original"].endswith("affecting their performances.")
+    assert len(out[0]["blocks"]) == 2 and len(out[1]["blocks"]) == 0
+
+
+def test_no_merge_hyphen_into_uppercase():
+    # 断词连字符只接小写连读（'informa-' + 'AD knowledge' 是重复残文，不能拼）
+    pages = [
+        _page(0, [_blk(0, "manual review of relevant informa-")]),
+        _page(1, [_blk(1, "AD knowledge, manual review is impossible.")]),
+    ]
+    out = _merge_cross_page(pages)
+    assert len(out[0]["blocks"]) == 1 and len(out[1]["blocks"]) == 1
+
+
+def test_no_merge_nonfunction_tail_uppercase():
+    # A 非虚词结尾 + 目标大写开头：不是续文（防误合并）
+    pages = [
+        _page(0, [_blk(0, "results on four public benchmarks")]),
+        _page(1, [_blk(1, "Table 1 shows the comparison.")]),
+    ]
+    out = _merge_cross_page(pages)
+    assert len(out[0]["blocks"]) == 1 and len(out[1]["blocks"]) == 1
+
+
+def test_chain_merge_until_terminal():
+    # A 合并后仍未完结 → 继续向后合并（连环续段）
+    pages = [
+        _page(0, [_blk(0, "the method relies on two"), _blk(0, "## heading")]),
+        _page(1, [_blk(1, "key components: retrieval and ranking.")]),
+    ]
+    out = _merge_cross_page(pages)
+    assert out[0]["blocks"][0]["original"] == "the method relies on two key components: retrieval and ranking."
+
+
 # ── 页眉/页脚固定文案过滤（跨页合并误吸页脚的根治）──────────────────
 
 

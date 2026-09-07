@@ -26,6 +26,68 @@ _SUB_TAG = re.compile(r"<sub>(.*?)</sub>", re.IGNORECASE | re.DOTALL)
 # 裸 HTML 会原样露出 → 只剥标签保留内容
 _U_TAG = re.compile(r"</?u>", re.IGNORECASE)
 
+# ── 双栏页列感知阅读顺序重排（2026-09-07 用户反馈"原文不全"）──────────
+# pymupdf4llm 按 y 带交错输出左右栏（DALK 首页实测：右栏顶部的段落续文
+# 被排到摘要之前，还与 Abstract 头粘连）。标准双栏页的真实阅读顺序是
+# 左栏自上而下 → 右栏自上而下。判定保守：段落→原始块文本前缀匹配必须
+# 全部命中、左右两侧各 ≥3 个窄块、x 范围有干净分栏沟，否则原样返回。
+_MD_NORM = re.compile(r"[^a-z0-9]+")
+_MD_NORM_ALPHA = re.compile(r"[^a-z]+")
+_COL_WIDE = 0.55  # 块宽超过页宽此比例视为通栏（标题/摘要横排）
+
+
+def _md_norm(s: str) -> str:
+    return _MD_NORM.sub("", (s or "").lower())
+
+
+def _match_block(h: str, norms: list[str], norms_alpha: list[str]) -> int | None:
+    """markdown 段落头 → 原始块下标。先按字母数字匹配，失败退字母级
+    （上/下标转换会把 1 变 ¹、n 变 ⁿ，数字级匹配必失败，作者行实测）。"""
+    ha = _MD_NORM_ALPHA.sub("", h.lower())
+    for i, t in enumerate(norms):
+        if t and (h in t or t[:24] in h):
+            return i
+    if len(ha) >= 12:
+        for i, t in enumerate(norms_alpha):
+            if t and (ha in t or t[:24] in ha):
+                return i
+    return None
+
+
+def _column_reading_order(raw_blocks: list, md: str) -> str:
+    """双栏页 markdown 段落重排为列感知顺序（raw_blocks: page.get_text('blocks')）。"""
+    paras = [p for p in re.split(r"\n\s*\n", md) if p.strip()]
+    if len(paras) < 5:
+        return md
+    rects = [pymupdf.Rect(b[:4]) for b in raw_blocks]
+    norms = [_md_norm(b[4]) for b in raw_blocks]
+    norms_alpha = [_MD_NORM_ALPHA.sub("", (b[4] or "").lower()) for b in raw_blocks]
+    page_w = max(r.x1 for r in rects) if rects else 0
+    keys: list[tuple[int, float, int] | None] = []
+    matched: list[tuple[pymupdf.Rect, bool, bool] | None] = []  # (rect, right, wide)
+    for idx, p in enumerate(paras):
+        h = _md_norm(p)[:24]
+        hit = _match_block(h, norms, norms_alpha) if h else None
+        if hit is None:
+            keys.append(None)
+            matched.append(None)
+            continue
+        r = rects[hit]
+        wide = r.width > _COL_WIDE * page_w
+        right = (not wide) and r.x0 >= page_w / 2
+        keys.append((1 if right else 0, r.y0, idx))
+        matched.append((r, right, wide))
+    if any(k is None for k in keys):
+        return md  # 有段落定位不到坐标：不重排（防未知版式被搅乱）
+    lefts = [r for r, right, wide in matched if not right and not wide]
+    rights = [r for r, right, wide in matched if right]
+    if len(lefts) < 3 or len(rights) < 3:
+        return md  # 不像双栏
+    if max(r.x1 for r in lefts) > min(r.x0 for r in rights) + 5:
+        return md  # 无干净分栏沟
+    ordered = sorted(range(len(paras)), key=lambda i: keys[i])
+    return "\n\n".join(paras[i] for i in ordered)
+
 # 上/下标字符映射：把 <sup>12</sup> 转成 ¹²，语义不丢失且不再是裸 HTML
 _SUP_MAP = str.maketrans("0123456789+-=()ni", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿⁱ")
 _SUB_MAP = str.maketrans("0123456789+-=()n", "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₙ")
@@ -397,6 +459,7 @@ def extract_pages(
             page = doc[pno]
             regions = snap_regions if refs else []
             inner = _figure_inner_text_rects(page, regions) if regions else []
+            raw_blocks: list = []
             if inner and refs:
                 with pymupdf.open(file_path) as doc2:
                     page2 = doc2[pno]
@@ -411,14 +474,21 @@ def extract_pages(
                     chunks = pymupdf4llm.to_markdown(
                         doc2, page_chunks=True, pages=[pno]
                     )
+                    # 阅读顺序重排的坐标基准必须与提取源一致（redact 后的
+                    # 副本），且必须在 doc2 存活期内取块（close 后 page 失效）
+                    raw_blocks = page2.get_text("blocks")
                 if refs:
                     print(f"[figure] p{pno + 1}: redact 图内文本块 {len(inner)} 个")
             else:
                 chunks = pymupdf4llm.to_markdown(doc, page_chunks=True, pages=[pno])
+                raw_blocks = page.get_text("blocks")
             c = chunks[0] if chunks else {}
             md = (c.get("text") or "").strip()
             if md:
                 md = _clean_html(md)
+                # 列感知重排（双栏页 左栏→右栏），必须在插图锚定前做——
+                # caption 段落的位置会因重排移动
+                md = _column_reading_order(raw_blocks, md)
                 if image_dir:
                     md = _normalize_image_refs(md, image_dir)
                     md = _insert_figures(md, refs)

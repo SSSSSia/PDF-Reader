@@ -394,8 +394,9 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
             nonlocal done
             async with sem:
                 texts = [b["original"] for _, b, _ in chunk]
-                # 公式保护（阶段2-T5）：LaTeX 占位后送翻，译文回来再还原
-                protected = [sanitize.protect_math(t) for t in texts]
+                # 公式保护（阶段2-T5）：LaTeX 定界式 + 数学碎片 token 占位后
+                # 送翻（正文照常翻译），译文回来再原样还原
+                protected = [sanitize.protect_formulas(t) for t in texts]
                 try:
                     outs = await translate_batch(
                         [p for p, _ in protected],

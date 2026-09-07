@@ -168,6 +168,19 @@ _NOISE_BLOCK = re.compile(
     re.IGNORECASE,
 )
 
+# 页眉/页脚固定文案（用户反馈"跨页合并把 'Published as a conference paper
+# at ICLR 2024' 吸进正文"，2026-09-07）：论文模板每页重复的出版声明/arXiv
+# 标识。短块 + 特征短语才判页脚——正文里讨论这些短语的整段不受影响。
+_FOOTER_PAT = re.compile(
+    r"published\s+as\s+a\s+conference\s+paper"
+    r"|arxiv[:\s]*\d{4}\.\d{4,5}"
+    r"|proceedings\s+of\s+the\s+\d{2,}"
+    r"|all\s+rights\s+reserved"
+    r"|©\s*\d{4}",
+    re.IGNORECASE,
+)
+_FOOTER_MAX_CHARS = 140
+
 
 def split_into_blocks(text: str) -> list[str]:
     text = (text or "").strip()
@@ -175,4 +188,9 @@ def split_into_blocks(text: str) -> list[str]:
         return []
     blocks = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
     # 过滤页码/页脚噪音块（去空格后匹配，兼容 "1 2" 之类异常排版）
-    return [b for b in blocks if not _NOISE_BLOCK.match(re.sub(r"\s+", "", b))]
+    return [
+        b
+        for b in blocks
+        if not _NOISE_BLOCK.match(re.sub(r"\s+", "", b))
+        and not (len(b) < _FOOTER_MAX_CHARS and _FOOTER_PAT.search(b))
+    ]

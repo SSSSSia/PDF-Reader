@@ -12,7 +12,7 @@ from translate.providers.openai_compat import (
     OpenAICompatProvider,
     parse_segments,
 )
-from translate.sanitize import is_formula_block, protect_math
+from translate.sanitize import is_formula_block, protect_formulas, protect_math
 
 
 # ── sanitize.protect_math ────────────────────────────────────────────
@@ -39,15 +39,30 @@ def test_protect_math_no_math_is_noop():
     assert restore("译文") == "译文"
 
 
-# ── sanitize.is_formula_block ────────────────────────────────────────
+# ── sanitize.is_formula_block（v2：只跳过纯公式块）──────────────────
+
+
+def test_pure_equation_block_detected():
+    # 独立成段的展示公式：几乎没有可读单词、噪声密集
+    eq = (
+        "E_D-1 = {e_D-1 1, e_D-1 2, ..., e_D-1 N_D-1 }, "
+        "P_D = {p_D 1, p_D 2, ...}, R_D-1 = {r_D-1 1, ...}"
+    )
+    assert is_formula_block(eq) is True
+
+
+def test_mixed_prose_formula_block_not_skipped():
+    # 用户截图实测块：公式碎片 + 真实论述 → 必须送翻（v1 整块跳过曾丢正文）
+    frag = (
+        "top- N topic entities E_0^0 = {e_1^0, e_2^0, ..., e_N^0}, to the question."
+        "Note that the number of topic entities might possibly be less than N."
+    )
+    assert is_formula_block(frag) is False
 
 
 def test_formula_fragment_block_detected():
-    # 真实样例（TOG p2）：公式被转成下划线+上下标碎片
-    frag = (
-        "ies _E_⁰ = _{e_ 1⁰_, e_⁰ 2_, ..., e_⁰ _N__}_to the questⁱoⁿ."
-        "Note that the ⁿumber of paths can be very large."
-    )
+    # 真实样例（TOG p2）：碎片为主、可读单词极少 → 纯公式块
+    frag = "_E_⁰ = _{e_ 1⁰_, e_⁰ 2_, ..., e_⁰ _N__}_"
     assert is_formula_block(frag) is True
 
 
@@ -70,6 +85,33 @@ def test_paragraph_with_identifier_not_detected():
 
 def test_short_text_never_formula():
     assert is_formula_block("_E_⁰") is False
+
+
+# ── sanitize.protect_formulas（片段级保护）──────────────────────────
+
+
+def test_protect_formulas_tokens():
+    src = (
+        "top- N topic entities E_0^0 = {e_1^0, e_2^0, ...} to the question. "
+        "Note that the number might be less than N."
+    )
+    protected, restore = protect_formulas(src)
+    assert "E_0^0" not in protected
+    assert "[[F" in protected
+    # 正文可读单词仍在（会被翻译）
+    assert "question" in protected
+    restored = restore("给定 [[F0]] 与 [[F1]]，注意数量。")
+    assert "E_0^0" in restored and "{e_1^0" in restored
+
+
+def test_protect_formulas_keeps_plain_words():
+    src = "The adam_optimizer with batch_size of 32 works well."
+    protected, restore = protect_formulas(src)
+    # 含下划线的标识符被保护，普通单词不保护
+    assert "[[F0]]" in protected and "[[F1]]" in protected
+    assert "The" in protected and "works" in protected
+    translated = "我们使用 [[F0]] 与 32 的 [[F1]]，效果很好。"
+    assert restore(translated) == "我们使用 adam_optimizer 与 32 的 batch_size，效果很好。"
 
 
 # ── openai_compat.parse_segments ─────────────────────────────────────
@@ -208,3 +250,55 @@ def test_hyphenated_word_joined():
     ]
     out = _merge_cross_page(pages)
     assert out[0]["blocks"][-1]["original"] == "the representation power of graphs"
+
+
+# ── 页眉/页脚固定文案过滤（跨页合并误吸页脚的根治）──────────────────
+
+
+def test_conference_footer_dropped():
+    from ocr.siliconflow import split_into_blocks
+    text = (
+        "Given a question, ToG leverages the underlying LLM to localize\n"
+        "the initial entity of the reasoning paths.\n\n"
+        "Published as a conference paper at ICLR 2024"
+    )
+    blocks = split_into_blocks(text)
+    assert len(blocks) == 1
+    assert "ICLR" not in blocks[0]
+
+
+def test_body_text_mentioning_footers_kept():
+    from ocr.siliconflow import split_into_blocks
+    para = (
+        "All baselines were published as a conference paper at ICLR 2024 or "
+        "later, and we compare against them on five benchmarks with full "
+        "reproduction of their reported settings and hyperparameters."
+    )
+    blocks = split_into_blocks(para)
+    assert len(blocks) == 1  # 长正文不受页脚过滤影响
+
+
+# ── 页眉/页脚固定文案过滤（跨页合并误吸页脚的根治）──────────────────
+
+
+def test_conference_footer_dropped():
+    from ocr.siliconflow import split_into_blocks
+    text = (
+        "Given a question, ToG leverages the underlying LLM to localize\n"
+        "the initial entity of the reasoning paths.\n\n"
+        "Published as a conference paper at ICLR 2024"
+    )
+    blocks = split_into_blocks(text)
+    assert len(blocks) == 1
+    assert "ICLR" not in blocks[0]
+
+
+def test_body_text_mentioning_footers_kept():
+    from ocr.siliconflow import split_into_blocks
+    para = (
+        "All baselines were published as a conference paper at ICLR 2024 or "
+        "later, and we compare against them on five benchmarks with full "
+        "reproduction of their reported settings and hyperparameters."
+    )
+    blocks = split_into_blocks(para)
+    assert len(blocks) == 1  # 长正文不受页脚过滤影响

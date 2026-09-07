@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
+import { useUiStore } from "../stores/uiStore";
 import MarkdownText from "./common/MarkdownText";
 import TranslatableImage from "./common/TranslatableImage";
 import BlockTranslateButton from "./common/BlockTranslateButton";
 import ReaderToolbar from "./ReaderToolbar";
+import OriginalReader from "./OriginalReader";
 
 /**
  * 紧跟模式：整篇连续文档流（无分页，对标 Scholaread，用户决策 2026-09-06）——
@@ -15,6 +17,7 @@ const isPureImage = (t: string) => /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(t);
 
 export default function InlinePage() {
   const { pages, isLoading, progress, error } = usePdfStore();
+  const readerMode = useUiStore((s) => s.readerMode);
   const blocks = pages.flatMap((p) => p.blocks);
 
   if (blocks.length === 0) {
@@ -68,7 +71,11 @@ export default function InlinePage() {
         </div>
       )}
 
-      {/* 整篇连续文档流：所有页的 block 按文档顺序排布 */}
+      {/* 原版模式（阶段5/D6）：pdfjs 原样渲染 + 块坐标译文浮层；进度条仍常驻上方 */}
+      {readerMode === "original" ? (
+        <OriginalReader />
+      ) : (
+      /* 整篇连续文档流：所有页的 block 按文档顺序排布 */
       <div className="h-[calc(100vh-170px)] overflow-y-auto">
         <div className="mx-auto max-w-4xl px-2 pb-16">
           {blocks.map((b) => (
@@ -103,6 +110,7 @@ export default function InlinePage() {
           ))}
         </div>
       </div>
+      )}
     </div>
   );
 }

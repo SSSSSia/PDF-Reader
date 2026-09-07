@@ -28,3 +28,8 @@ cache/
 .workbuddy/
 test_ocr/
 .smoke*
+
+# Spike-s2 demo 本地大文件（pdfjs 构建产物从 node_modules 复制即可；样张为版权论文不入库）
+docs/spike-s2/pdf.min.mjs
+docs/spike-s2/pdf.worker.min.mjs
+docs/spike-s2/sample.pdf

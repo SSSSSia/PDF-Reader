@@ -385,6 +385,15 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                 ]
         # 跨页段落合并（阶段2-T3）：紧跟模式不再把跨页同段显示成两块残文
         pages = _merge_cross_page(pages)
+        # 原版对照模式（阶段5-T1，D6）：为每个最终块标注页面坐标 bbox，
+        # 前端 pdfjs 原版渲染后按坐标叠加高亮/译文浮层。前缀匹配失败
+        # （公式碎块/图内文字/扫描页）→ None，只是不高亮，不损失内容。
+        try:
+            from pipeline.layout import attach_block_bboxes
+
+            await asyncio.to_thread(attach_block_bboxes, file_path, pages)
+        except Exception as e:  # 原版模式是增值能力，绝不阻断主链路
+            print(f"[layout] bbox 标注失败（原版模式降级为无坐标）: {e}")
         job["progress"] = 30
 
         # ---- 阶段 2：翻译（30% ~ 100%）----

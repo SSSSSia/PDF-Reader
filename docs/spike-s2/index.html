@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S2 Spike：pdfjs-dist 全页渲染 + 文本层坐标定位</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f6f8; color: #1c2130; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 10px 16px; background: #fff; border-bottom: 1px solid #e3e6ec; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 12px 0 0; }
+  .pagebtn { border: 1px solid #c9ced9; background: #fff; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
+  .pagebtn:hover { background: #eef2ff; }
+  #pageno { width: 42px; text-align: center; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #viewer-wrap { flex: 1; overflow: auto; position: relative; background: #d9dce3; }
+  #viewer { position: relative; margin: 16px auto; width: max-content; box-shadow: 0 2px 14px rgba(0,0,0,.18); background: #fff; }
+  canvas { display: block; }
+  .textLayer { position: absolute; inset: 0; overflow: hidden; line-height: 1; text-size-adjust: none; forced-color-adjust: none; opacity: 1; }
+  .textLayer :is(span, br) { position: absolute; white-space: pre; transform-origin: 0 0; color: transparent; cursor: text; }
+  .textLayer span:hover { background: rgba(30,110,255,.28); border-radius: 2px; }
+  .textLayer ::selection { background: rgba(30,110,255,.35); }
+  aside { width: 320px; border-left: 1px solid #e3e6ec; background: #fff; padding: 14px; overflow: auto; }
+  aside h2 { font-size: 14px; margin: 0 0 8px; }
+  #metrics { font: 12px/1.7 Consolas, monospace; background: #f4f6fa; border: 1px solid #e3e6ec; border-radius: 8px; padding: 10px; white-space: pre-wrap; }
+  #pick-info { margin-top: 12px; font-size: 13px; color: #4a5164; line-height: 1.6; }
+  #picked-box { margin-top: 8px; font: 12px/1.6 Consolas, monospace; background: #fffbe8; border: 1px solid #eadfa8; border-radius: 8px; padding: 8px; display: none; white-space: pre-wrap; }
+  .note { margin-top: 14px; font-size: 12px; color: #8a90a0; line-height: 1.7; }
+</style>
+</head>
+<body>
+<header>
+  <h1>S2 Spike · pdfjs 原生渲染可行性</h1>
+  <button class="pagebtn" id="prev">上一页</button>
+  <input id="pageno" value="7" aria-label="页码">
+  <button class="pagebtn" id="go">跳转</button>
+  <button class="pagebtn" id="next">下一页</button>
+  <span style="color:#8a90a0;font-size:12px">样张：DALK.pdf（双栏，第 7 页为图表密集页）· 点正文可查看 bbox 坐标</span>
+</header>
+<main>
+  <div id="viewer-wrap"><div id="viewer"><canvas id="cv"></canvas><div id="textLayer" class="textLayer"></div></div></div>
+  <aside>
+    <h2>性能指标（本机 WebView 实测）</h2>
+    <div id="metrics">渲染中…</div>
+    <div id="pick-info">点击页面任意文本，下方显示其文本层坐标（B/C 方案按此贴译文）。</div>
+    <div id="picked-box"></div>
+    <div class="note">
+      验证点：① pdfjs 6.x 在 WebView(Chromium) 的全页渲染可行性；② 文本层 span 能否精确定位（hover/点击）；③ 渲染耗时与内存。
+      请同时在本应用（Tauri WebView2）内打开本页比对指标。
+    </div>
+  </aside>
+</main>
+<script type="module">
+import * as pdfjs from "./pdf.min.mjs";
+
+pdfjs.GlobalWorkerOptions.workerSrc = "./pdf.worker.min.mjs";
+
+const cv = document.getElementById("cv");
+const tl = document.getElementById("textLayer");
+const viewer = document.getElementById("viewer");
+const metricsEl = document.getElementById("metrics");
+const pickedEl = document.getElementById("picked-box");
+const pickInfo = document.getElementById("pick-info");
+let pdf = null;
+let currentPage = 7;
+
+function log(msg) {
+  metricsEl.textContent += "\n" + msg;
+}
+window.addEventListener("error", (e) => log("[window.error] " + e.message + " @ " + (e.filename || "") + ":" + (e.lineno || "")));
+window.addEventListener("unhandledrejection", (e) => log("[promise] " + (e.reason && (e.reason.message || e.reason))));
+
+async function renderPage(n) {
+  const t0 = performance.now();
+  const page = await pdf.getPage(n);
+  const dpr = window.devicePixelRatio || 1;
+  const base = page.getViewport({ scale: 1.35 });
+  const viewport = page.getViewport({ scale: 1.35 * dpr });
+  cv.width = viewport.width;
+  cv.height = viewport.height;
+  cv.style.width = base.width + "px";
+  cv.style.height = base.height + "px";
+  tl.style.width = base.width + "px";
+  tl.style.height = base.height + "px";
+  tl.textContent = "";
+  viewer.style.setProperty("--scale-factor", base.scale);
+
+  const task = page.render({ canvasContext: cv.getContext("2d"), viewport });
+  await task.promise;
+  const tRender = performance.now() - t0;
+
+  const t1 = performance.now();
+  const textContent = await page.getTextContent();
+  // pdfjs 6：TextLayer 类；旧版回退 renderTextLayer
+  if (pdfjs.TextLayer) {
+    const layer = new pdfjs.TextLayer({ textContentSource: textContent, container: tl, viewport: base });
+    await layer.render();
+  } else {
+    await pdfjs.renderTextLayer({ textContentSource: textContent, container: tl, viewport: base });
+  }
+  const tText = performance.now() - t1;
+
+  const heap = performance.memory
+    ? `堆内存: ${(performance.memory.usedJSHeapSize / 1048576).toFixed(1)} MB`
+    : "堆内存: (performance.memory 不可用)";
+  metricsEl.textContent =
+    `页码: ${n} / ${pdf.numPages}\n` +
+    `画布: ${viewport.width | 0}×${viewport.height | 0} px (scale 1.35, dpr ${dpr})\n` +
+    `页面渲染耗时: ${tRender.toFixed(0)} ms\n` +
+    `文本层构建耗时: ${tText.toFixed(0)} ms (span ${textContent.items.length} 项)\n` +
+    heap;
+  currentPage = n;
+  document.getElementById("pageno").value = n;
+}
+
+tl.addEventListener("click", (e) => {
+  const s = e.target;
+  if (!(s instanceof HTMLSpanElement)) return;
+  pickedEl.style.display = "block";
+  pickedEl.textContent =
+    `文本: ${s.textContent.slice(0, 80)}\n` +
+    `left: ${s.style.left}  top: ${s.style.top}\n` +
+    `font-size: ${s.style["font-size"]}  transform: ${s.style.transform.slice(0, 40)}\n` +
+    `→ 译文将按此坐标生成对照框（贴译 overlay 演示）`;
+  pickInfo.textContent = "已选中一个文本层 span：";
+});
+
+async function load() {
+  const t0 = performance.now();
+  log("模块已加载，开始解析文档…");
+  pdf = await pdfjs.getDocument({
+    url: "./sample.pdf",
+    onProgress: (d) => {
+      if (d.total > 0) metricsEl.textContent = `下载进度: ${Math.round(d.loaded / d.total * 100)}%（${d.loaded}/${d.total} 字节）\n解析中…`;
+      else metricsEl.textContent = `已下载 ${d.loaded} 字节\n解析中…`;
+    },
+  }).promise;
+  const tDoc = performance.now() - t0;
+  metricsEl.textContent = `文档解析耗时: ${tDoc.toFixed(0)} ms（${pdf.numPages} 页）\n渲染中…`;
+  await renderPage(currentPage);
+}
+
+document.getElementById("prev").onclick = () => currentPage > 1 && renderPage(currentPage - 1);
+document.getElementById("next").onclick = () => currentPage < pdf.numPages && renderPage(currentPage + 1);
+document.getElementById("go").onclick = () => {
+  const n = parseInt(document.getElementById("pageno").value, 10);
+  if (n >= 1 && n <= pdf.numPages) renderPage(n);
+};
+load();
+</script>
+</body>
+</html>

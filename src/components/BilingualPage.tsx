@@ -1,9 +1,11 @@
 import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
+import { useUiStore } from "../stores/uiStore";
 import MarkdownText from "./common/MarkdownText";
 import TranslatableImage from "./common/TranslatableImage";
 import BlockTranslateButton from "./common/BlockTranslateButton";
 import ReaderToolbar from "./ReaderToolbar";
+import OriginalReader from "./OriginalReader";
 
 /**
  * 左右对照模式：整篇连续滚动（无分页，对标 Scholaread，用户决策 2026-09-06）。
@@ -14,6 +16,7 @@ import ReaderToolbar from "./ReaderToolbar";
  */
 export default function BilingualPage() {
   const { pages, isLoading, progress, error } = usePdfStore();
+  const readerMode = useUiStore((s) => s.readerMode);
   const blocks = pages.flatMap((p) => p.blocks);
 
   // 纯图片块（图表快照）：后端已令译文=原文，前端整行居中渲染一次
@@ -70,7 +73,11 @@ export default function BilingualPage() {
         </div>
       )}
 
-      {/* 整篇单列滚动：所有页的 block 按文档顺序连续排布 */}
+      {/* 原版模式（阶段5/D6）：pdfjs 原样渲染 + 块坐标译文浮层；进度条仍常驻上方 */}
+      {readerMode === "original" ? (
+        <OriginalReader />
+      ) : (
+      /* 整篇单列滚动：所有页的 block 按文档顺序连续排布 */
       <div className="h-[calc(100vh-170px)] overflow-y-auto">
         <div className="mx-auto max-w-6xl">
           {/* 窄窗口降级为单列（阶段3-T1 残余）：原文在上、译文在下 */}
@@ -133,6 +140,7 @@ export default function BilingualPage() {
           <div className="h-16" aria-hidden="true" />
         </div>
       </div>
+      )}
     </div>
   );
 }

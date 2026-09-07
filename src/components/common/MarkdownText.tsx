@@ -1,6 +1,10 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { assetUrl, openExternal } from "../../lib/bridge";
+import { preprocessMath } from "../../lib/mathFragment";
 
 /**
  * Markdown 渲染组件：OCR/文本层返回的是 markdown（含表格/标题/公式/图片引用），
@@ -16,7 +20,8 @@ export default function MarkdownText({ text }: { text: string }) {
   return (
     <div className="prose prose-sm max-w-none dark:prose-invert sm:prose-base prose-headings:my-2 prose-p:my-1.5 prose-table:my-2 prose-li:my-0.5 prose-pre:my-2 prose-img:my-2 prose-img:rounded-lg">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
         urlTransform={(url) => url}
         components={{
           a: ({ href, children }) => {
@@ -48,7 +53,7 @@ export default function MarkdownText({ text }: { text: string }) {
           },
         }}
       >
-        {text || ""}
+        {preprocessMath(text || "")}
       </ReactMarkdown>
     </div>
   );

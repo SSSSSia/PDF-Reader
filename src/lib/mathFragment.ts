@@ -35,7 +35,10 @@ function _script_like(body: string): boolean {
 
 /** 单个空白 token → KaTeX 行内式；不匹配原样返回 */
 function _convert_token(tok: string): string {
-  const m = _MATH_TOKEN.exec(tok);
+  // pymupdf4llm 常产出双下划线（_E__D-1），连写 `_` 会让脚本段失配——
+  // 匹配前折叠为单下划线；不匹配时仍返回原文
+  const t = tok.replace(/_{2,}/g, "_");
+  const m = _MATH_TOKEN.exec(t);
   if (!m) return tok;
   const [, pre, base, scripts, post] = m;
   const segs = scripts.match(_SCRIPT_SEG) ?? [];

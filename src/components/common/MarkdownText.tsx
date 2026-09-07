@@ -51,6 +51,12 @@ export default function MarkdownText({ text }: { text: string }) {
               />
             );
           },
+          // 学术宽表兜底（阶段3-T4）：列多时横向滚动，不撑破双栏布局
+          table: ({ children }) => (
+            <div className="overflow-x-auto">
+              <table>{children}</table>
+            </div>
+          ),
         }}
       >
         {preprocessMath(text || "")}

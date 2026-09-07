@@ -72,7 +72,8 @@ export default function BilingualPage() {
       {/* 整篇单列滚动：所有页的 block 按文档顺序连续排布 */}
       <div className="h-[calc(100vh-170px)] overflow-y-auto">
         <div className="mx-auto max-w-6xl">
-          <div className="sticky top-0 z-10 grid grid-cols-2 border-b border-slate-200 bg-slate-50/95 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95">
+          {/* 窄窗口降级为单列（阶段3-T1 残余）：原文在上、译文在下 */}
+          <div className="sticky top-0 z-10 hidden grid-cols-2 border-b border-slate-200 bg-slate-50/95 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95 md:grid">
             <div className="py-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
               原文
             </div>
@@ -85,13 +86,13 @@ export default function BilingualPage() {
             isPureImage(b.original) ? (
               <div
                 key={`${b.page}-${b.block_id}`}
-                className="grid grid-cols-2 gap-x-8 border-b border-dashed border-slate-200 dark:border-slate-700"
+                className="grid grid-cols-1 gap-y-2 border-b border-dashed border-slate-200 dark:border-slate-700 md:grid-cols-2 md:gap-x-8"
                 style={{ contentVisibility: "auto", containIntrinsicSize: "auto 260px" }}
               >
                 <div className="py-3 pr-2">
                   <TranslatableImage md={b.original} />
                 </div>
-                <div className="border-l border-slate-200 py-3 pl-2 dark:border-slate-700">
+                <div className="py-3 md:border-l md:border-slate-200 md:pl-2 dark:md:border-slate-700">
                   {/* 图表默认右栏也显示原图；表格可点按生成译制图 */}
                   <TranslatableImage md={b.translated || b.original} />
                 </div>
@@ -99,15 +100,21 @@ export default function BilingualPage() {
             ) : (
               <div
                 key={`${b.page}-${b.block_id}`}
-                className="grid grid-cols-2 gap-x-8 border-b border-dashed border-slate-200 dark:border-slate-700"
+                className="grid grid-cols-1 border-b border-dashed border-slate-200 dark:border-slate-700 md:grid-cols-2 md:gap-x-8"
                 style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" }}
               >
                 <div className="paper-font py-3 pr-2 text-justify text-slate-900 dark:text-slate-100">
                   <MarkdownText text={b.original} />
                 </div>
-                <div className="paper-font border-l border-slate-200 py-3 pl-2 text-justify text-blue-900 dark:border-slate-700 dark:text-blue-100">
+                <div className="paper-font py-3 text-justify text-blue-900 dark:text-blue-100 md:border-l md:border-slate-200 md:pl-2 dark:md:border-slate-700">
                   {b.translated ? (
-                    <MarkdownText text={b.translated} />
+                    <>
+                      {/* 单列模式下给译文加个小标签，区分原文 */}
+                      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-blue-500 md:hidden dark:text-blue-400">
+                        译文
+                      </span>
+                      <MarkdownText text={b.translated} />
+                    </>
                   ) : (
                     <span className="italic text-slate-400 dark:text-slate-500">
                       待翻译…

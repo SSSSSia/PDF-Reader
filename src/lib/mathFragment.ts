@@ -18,15 +18,18 @@
 const _DOLLAR_DISPLAY = /\\\[(.+?)\\\]/gs;
 const _DOLLAR_INLINE = /\\\((.+?)\\\)/gs;
 
-// X_sub / X^sup：base 以字母开头；sub/sup 为 ≤6 位字母数字/+-（剥掉
-// token 首尾的包裹符号 {}() 等，尾部允许残留的下划线——s_n_ 形态）
+// 上下标脚本段：X_1^{Canberra}、E_D-1、s_n_ 等。结构 =
+// 前导包裹(含 pymupdf4llm 的前导下标标记 _) + base + 一段或多段 [_^]脚本
+// + 尾部包裹。脚本体：≤6 位字母数字+-，或 ≤24 位花括号内容（Canberra）。
 const _MATH_TOKEN =
-  /^([({\[]*)([A-Za-z][A-Za-z0-9]*)([_^])([A-Za-z0-9+\-]{1,6})([_)}\].,;:!?]*)$/;
+  /^([({\[]*_*)([A-Za-z][A-Za-z0-9]*)((?:[_^](?:\{[^{}]{1,24}\}|[A-Za-z0-9+\-]{1,6}))+)([)}\].,;:!?]*_*)$/;
+const _SCRIPT_SEG = /[_^](?:\{[^{}]{1,24}\}|[A-Za-z0-9+\-]{1,6})/g;
 
-/** 下标部分是否像数学记号（而非英文单词）：数字开头、含数字/-、或单个大写/小写字母 */
-function _subscript_like(sub: string): boolean {
-  if (sub.length <= 2) return true; // D, d, 0, -1…
-  if (/[0-9\-]/.test(sub)) return true; // D-1, 2-1, n1…
+/** 下标部分是否像数学记号（而非英文单词）：数字开头、含数字/-、或 ≤2 字符。
+ * 只约束裸脚本体；花括号体（^{Canberra}）视为有意标注，直接放行。 */
+function _script_like(body: string): boolean {
+  if (body.length <= 2) return true; // D, d, 0, -1…
+  if (/[0-9\-]/.test(body)) return true; // D-1, 2-1, n1…
   return false;
 }
 
@@ -34,12 +37,29 @@ function _subscript_like(sub: string): boolean {
 function _convert_token(tok: string): string {
   const m = _MATH_TOKEN.exec(tok);
   if (!m) return tok;
-  const [, pre, base, op, sub, post] = m;
-  if (!_subscript_like(sub)) return tok;
-  const script = op === "^" ? "^" : "_";
-  // 尾部残留下划线（s_n_ 形态）并入公式，避免渲染后还剩一个裸 _
+  const [, pre, base, scripts, post] = m;
+  const segs = scripts.match(_SCRIPT_SEG) ?? [];
+  const parts: { op: string; body: string }[] = [];
+  for (const seg of segs) {
+    const op = seg[0];
+    let body = seg.slice(1);
+    const braced = body.startsWith("{");
+    if (braced) body = body.slice(1, -1);
+    if (!braced && !_script_like(body)) return tok; // 疑似 snake_case，放弃
+    if (braced && /^[A-Za-z]{2,}$/.test(body)) body = `\\text{${body}}`;
+    // 连续同向脚本合并（e_n_D-1 → e_{n,D-1}，双下标是 KaTeX 语法错误）
+    const prev = parts[parts.length - 1];
+    if (prev && prev.op === op) {
+      prev.body = `${prev.body},${body}`;
+    } else {
+      parts.push({ op, body });
+    }
+  }
+  // 前导/尾部残留下划线并入公式丢弃（下标标记），包裹括号保留
+  const preClean = pre.replace(/_+/g, "");
   const tail = post.startsWith("_") ? post.slice(1) : post;
-  return `${pre}$${base}{${script}{${sub}}}$${tail}`;
+  const latex = parts.map((p) => `${p.op}{${p.body}}`).join("");
+  return `${preClean}$${base}${latex}$${tail}`;
 }
 
 export function preprocessMath(md: string): string {

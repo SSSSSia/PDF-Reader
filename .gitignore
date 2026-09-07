@@ -33,3 +33,4 @@ test_ocr/
 docs/spike-s2/pdf.min.mjs
 docs/spike-s2/pdf.worker.min.mjs
 docs/spike-s2/sample.pdf
+vite.config.ts.timestamp-*

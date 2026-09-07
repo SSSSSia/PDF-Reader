@@ -216,15 +216,52 @@ def _region_lines(page, region) -> list[dict]:
     return lines
 
 
-def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) -> list[str]:
-    """把页面图表区域截图为 PNG，返回可插入 markdown 的图片引用列表（按 y 序）。
+def _absorb_header_lines(page, r) -> None:
+    """把紧邻区域上方的表头文本行并入区域（原地修改 r）。
+
+    实测（HippoRAG Table 2）：表格绘图簇从第一条横线开始，表头
+    （MuSiQue | 2Wiki | HotpotQA | Average 及 R@2/R@5 行）悬在簇上方
+    不在区域内——redact 漏掉它们，pymupdf4llm 把残余表头识别成小
+    markdown 表格残留正文，用户看到表头被"翻译了两遍"。
+    判定：区域上方 25pt 内的文本行，按词间隙切分 ≥2 段（表头是多列
+    特征，正文行是连续长句）即并入，逐行向上直到不满足。
+    """
+    words = [w for w in page.get_text("words") if w[0] >= r.x0 - 6 and w[2] <= r.x1 + 6]
+    for _ in range(4):  # 最多吸收 4 行（双层表头够了），防失控
+        band_top = r.y0 - 25
+        cands = [
+            w for w in words
+            if band_top <= (w[1] + w[3]) / 2 < r.y0
+        ]
+        if not cands:
+            return
+        top = min(w[1] for w in cands)
+        # 该行按词间隙切段，≥2 段才算表头行
+        line = sorted((w for w in cands if w[1] <= top + 3), key=lambda w: w[0])
+        segs, cur = 1, line[0]
+        for a, b in zip(line, line[1:]):
+            if b[0] - a[2] > 10:
+                segs += 1
+            cur = b
+        if segs < 2:
+            return
+        r.y0 = top - 2
+
+
+def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) -> tuple[list[str], list]:
+    """把页面图表区域截图为 PNG，返回 (图片引用列表, 最终区域列表)。
 
     区域分类（2026-09-06 用户决策）：与 find_tables bbox 重叠 >50% 的判为
     表格，快照命名 tab_*；其余为图，命名 fig_*。表格的译制图改为"全文翻译
     完成后用户点按触发"（按需，不拖慢全文），sidecar 记录 kind 与源 PDF。
 
     同时落盘 sidecar JSON（<fig>.json：区域坐标 + 图内逐行文字元数据），
-    供译制图叠字使用。"""
+    供译制图叠字使用。
+
+    返回最终区域（外扩+表头吸收后）供 redact 使用——redact 必须与快照
+    同一区域，否则表头等悬在簇外的文字只进快照不被抹除，正文残留
+    （pymupdf4llm 会把残余表头再识别成小 markdown 表格，用户看到
+    "表头翻译了两遍"，HippoRAG 实测）。"""
     import json
 
     page = doc[page_num]
@@ -233,10 +270,14 @@ def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) ->
     except Exception:
         table_boxes = []
     refs: list[str] = []
+    final_regions: list = []
     pad = 3.0  # 快照外扩（pt）：实测 find_tables/绘图簇 bbox 会裁掉表格右缘
     # 最后一个数字（HippoRAG Table 5 "77.4" 只剩半个 "5"），小外扩零风险
     for k, r0 in enumerate(_figure_regions(page, debug=debug)):
         r = (r0 + (-pad, -pad, pad, pad)) & page.rect
+        # 表头吸收：表格绘图簇从第一条横线开始，表头文本行悬在簇上方
+        # （见 _absorb_header_lines docstring），并入区域统一截图+redact
+        _absorb_header_lines(page, r)
         kind = "figure"
         for tb in table_boxes:
             inter = r & tb
@@ -272,7 +313,8 @@ def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) ->
         except Exception:
             pass  # sidecar 失败只影响译制图，不影响快照
         refs.append(f"![Figure]({path.replace(os.sep, '/')})")
-    return refs
+        final_regions.append(r)
+    return refs, final_regions
 
 
 def _insert_figures(md: str, refs: list[str]) -> str:
@@ -345,13 +387,15 @@ def extract_pages(
             os.makedirs(image_dir, exist_ok=True)
         out: list[str | None] = []
         for idx, pno in enumerate(page_nums):
-            # 1) 先在原文档上快照（渲染含图内文字，所见即所得）
-            refs = (
-                _snapshot_figures(doc, pno, image_dir) if image_dir else []
+            # 1) 先在原文档上快照（渲染含图内文字，所见即所得）。
+            #    返回最终区域（外扩+表头吸收）——redact 必须用同一区域，
+            #    否则快照里有的文字在正文残留（表头翻译两遍，实测踩坑）
+            refs, snap_regions = (
+                _snapshot_figures(doc, pno, image_dir) if image_dir else ([], [])
             )
             # 2) 提取文本：有图表区域的页在 redact 副本上提取
             page = doc[pno]
-            regions = _figure_regions(page, debug=False) if refs else []
+            regions = snap_regions if refs else []
             inner = _figure_inner_text_rects(page, regions) if regions else []
             if inner and refs:
                 with pymupdf.open(file_path) as doc2:

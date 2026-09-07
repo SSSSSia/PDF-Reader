@@ -37,7 +37,9 @@ MAX_CONCURRENCY = 8
 # v8：区域合并加空隙容差（图内文字行隔开的绘图簇不再把一张图拆成多条横带）。
 # v9：清理 <u> 下划线标签（用户反馈"下划线还在"），markdown 内容变化。
 # v10：快照区域外扩 3pt（表格右缘数字被裁，HippoRAG Table 5 实测），快照内容变化。
-TEXT_LAYER_MODEL = "text-layer-v10"
+# v11：表格快照吸收上方表头行且 redact 与快照同区域（表头在正文残留被
+#      pymupdf4llm 再识别成小 markdown 表格，用户看到"表头翻译两遍"）。
+TEXT_LAYER_MODEL = "text-layer-v11"
 
 # 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
 # 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。

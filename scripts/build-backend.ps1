@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     将 FastAPI 后端 (backend/main.py) 打包为 Tauri sidecar 可执行文件。
 .DESCRIPTION
@@ -75,7 +75,7 @@ Write-Host "[4/5] 正在打包后端，请稍候（约 1-3 分钟）..."
     --hidden-import uvicorn.logging `
     --hidden-import uvicorn.loops.auto `
     --hidden-import uvicorn.protocols.http.auto `
-    --hidden-import uvicorn.protocols.websocket.auto `
+    --hidden-import uvicorn.protocols.websockets.auto `
     --hidden-import uvicorn.lifespan.on `
     --collect-all uvicorn `
     --collect-all PyMuPDF `

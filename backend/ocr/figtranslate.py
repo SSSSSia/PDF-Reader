@@ -179,18 +179,30 @@ _Y_TOL = 3.5  # 视觉行聚类容差（pt）
 _COL_GAP_MIN = 7.0  # 词间隙超过该值视为列边界（pt）
 
 
-def _region_tables(src_pdf: str, page_num: int, region: list[float]) -> list[list[list[str]]]:
-    """从词坐标重建快照区域内的表格，返回按块（多张表）组织的行列表。
+def _region_tables(src_pdf: str, page_num: int, region: list[float]):
+    """从词坐标重建快照区域内的表格。
+
+    返回 (blocks, col_fracs)：
+    - blocks: 按块（多张表）组织的 {"rows": 行列表, "spans": 跨列行下标集}；
+    - col_fracs: 原表各列宽度占比（渲染时按比例缩放，与原图对齐）。
 
     不用 find_tables：实测这类表格线不全，它会把整个数据区并成一个
     大单元格（方法名/数字全部挤在一列，2026-09-06 用户截图踩坑）。
     改用"表格列垂直对齐"特性：
     1. 词按 y 中心聚类成视觉行，行内按词间隙切段（记录每段 x 范围）；
-    2. 切段间隙的 x 位置跨行聚类出全局列边界（≥2 行出现的间隙才算）；
-    3. 每段按 x 中心归位到列——单元格内折行不会串列；
-    4. 首列为空的视觉行是上一行单元格的折行续行，并入上一行
-       （实测续行不合并会把多行单元格拆成错位的多个行，2026-09-06 用户截图踩坑）；
-    5. 丢弃混进区域的段落/图注行（单格超长）；行间距显著变大处切分为多张表。"""
+    2. 取段数最多的视觉行作为列定义行（通常即表头/最宽行），
+       列边界 = 其相邻段的中点；其余行的段按 x 中心归位。
+       不用跨行聚类间隙中点：中点随左列文字长度浮动，
+       同一列边界会被拆成多簇（实测多出空列，2026-09-06 踩坑）；
+    3. 行分类（2026-09-07 ToG Table 1 踩坑后重构）：
+       - 续行：首列空且所有内容段都是"窄段"（段宽 ≤1.3×所在列宽，
+         即单元格内折行）→ 并入上一行；
+       - 跨列行：含空单元格且非续行——多级表头（"Multi-Hop KBQA" 横跨
+         数列）与分组分隔行（"With external knowledge" 段宽横跨数列）。
+         此前无差别并入上一行，分隔行被吸进数据行中间（用户截图踩坑）；
+       - 其余为普通数据行（整行满格）。
+    4. 行间距显著变大处切分为多张表（分隔行保留后正常表不再被误切）；
+    5. 丢弃混进区域的段落/图注行（单格超长）。"""
     try:
         with pymupdf.open(src_pdf) as doc2:
             page = doc2[page_num]
@@ -233,46 +245,69 @@ def _region_tables(src_pdf: str, page_num: int, region: list[float]) -> list[lis
             ncol = len(ref)
             bounds = [(ref[i][1] + ref[i + 1][0]) / 2 for i in range(ncol - 1)]
 
-            def _to_row(segs: list[tuple[float, float, str]]) -> list[str]:
-                row = [""] * ncol
+            # 3) 组装行并分类（续行 / 跨列行 / 普通行）。
+            #    续行判定用双条件（2026-09-07 ToG Table 1 踩坑）：
+            #    - 段宽窄（单元格内折行不会超出所在列宽）；
+            #    - 行距近（≤1.25×中位行距）——分组分隔行（"With external
+            #      knowledge"）上下留空、行距 1.35×，且小体大写字母间距
+            #      会被切成多个窄段，段宽条件拦不住，行距才能拦住。
+            gaps_raw = sorted(b[0] - a[0] for a, b in zip(seg_lines, seg_lines[1:]))
+            med_gap = gaps_raw[len(gaps_raw) // 2] if gaps_raw else 0.0
+            col_pt_w = [r.x0, *bounds, r.x1]
+            col_pt_w = [col_pt_w[i + 1] - col_pt_w[i] for i in range(len(col_pt_w) - 1)]
+            # [y, cells, 跨列行]（列表为了合并续行后能更新跨列标记）
+            assembled: list[list] = []
+            for yc, segs in seg_lines:
+                cells = [""] * ncol
+                widths = [0.0] * ncol
                 for x0, x1, txt in segs:
                     ci = min(sum(1 for b in bounds if (x0 + x1) / 2 > b), ncol - 1)
-                    row[ci] = (row[ci] + " " + txt).strip()
-                return row
-
-            # 5a) 丢弃混入的段落/图注行（仅一格有内容且超长；表头跨列行较短不受影响）
-            rows = [(yc, _to_row(segs)) for yc, segs in seg_lines]
-            rows = [
-                (y, rw)
-                for y, rw in rows
-                if not (sum(1 for c in rw if c) == 1 and max(map(len, rw)) > 60)
-            ]
-            if not rows:
-                return []
-            # 4) 续行合并：首列无内容的视觉行并入上一行
-            merged: list[tuple[float, list[str]]] = []
-            for y, rw in rows:
-                if merged and not rw[0] and any(rw[1:]):
-                    prev = merged[-1][1]
-                    for ci in range(1, ncol):
-                        if rw[ci]:
-                            prev[ci] = (prev[ci] + " " + rw[ci]).strip()
+                    cells[ci] = (cells[ci] + " " + txt).strip()
+                    widths[ci] = max(widths[ci], x1 - x0)
+                # 丢弃混入的段落/图注行（单格超长；表头跨列行较短不受影响）
+                if sum(1 for c in cells if c) == 1 and max(map(len, cells)) > 60:
                     continue
-                merged.append((y, list(rw)))
-            # 5b) 行间距显著变大处切分为多张表
-            gaps = [b[0] - a[0] for a, b in zip(merged, merged[1:])]
+                nonempty = [i for i, c in enumerate(cells) if c]
+                gap_ok = (
+                    bool(assembled)
+                    and yc - assembled[-1][0] <= max(med_gap * 1.25, _Y_TOL * 2)
+                )
+                narrow = nonempty and all(
+                    widths[i] <= 1.3 * col_pt_w[i] for i in nonempty
+                )
+                if assembled and cells[0] == "" and gap_ok and narrow:
+                    # 续行 → 并入上一行
+                    prev = assembled[-1]
+                    for ci in nonempty:
+                        prev[1][ci] = (prev[1][ci] + " " + cells[ci]).strip()
+                    if all(prev[1]):  # 合并后满格 → 不再是跨列行
+                        prev[2] = False
+                    continue
+                # 含空格单元格的独立行 → 跨列行（多级表头/分组分隔行）
+                assembled.append([yc, cells, any(c == "" for c in cells)])
+            if not assembled:
+                return []
+            # 4) 行间距显著变大处切分为多张表
+            gaps = [b[0] - a[0] for a, b in zip(assembled, assembled[1:])]
             med = sorted(gaps)[len(gaps) // 2] if gaps else 0.0
             thr = max(med * 2.5, 15.0)
-            blocks: list[list[list[str]]] = []
-            cur_block: list[list[str]] = [merged[0][1]]
-            for (ya, ra), (yb, rb) in zip(merged, merged[1:]):
+            blocks: list[dict] = []
+            cur: dict = {"rows": [assembled[0][1]], "spans": set()}
+            if assembled[0][2]:
+                cur["spans"].add(0)
+            for (ya, ra, sa), (yb, rb, sb) in zip(assembled, assembled[1:]):
                 if yb - ya > thr:
-                    blocks.append(cur_block)
-                    cur_block = []
-                cur_block.append(rb)
-            if cur_block:
-                blocks.append(cur_block)
-            return blocks
+                    blocks.append(cur)
+                    cur = {"rows": [], "spans": set()}
+                cur["rows"].append(rb)
+                if sb:
+                    cur["spans"].add(len(cur["rows"]) - 1)
+            blocks.append(cur)
+            # 5) 原表列宽占比（渲染时等比缩放，与原图对齐）
+            edges = [r.x0, *bounds, r.x1]
+            fracs = [edges[i + 1] - edges[i] for i in range(len(edges) - 1)]
+            tot = sum(fracs) or 1.0
+            return blocks, [f / tot for f in fracs]
     except Exception as e:
         print(f"[figtranslate] 表格结构解析失败: {e}")
         return []
@@ -361,59 +396,132 @@ def _wrap_cell(text: str, font, maxw: int, measure) -> list[str]:
     return lines or [""]
 
 
-def _render_tables_png(tables: list[list[list[str]]], out_path: str) -> None:
-    """把（已翻译的）表格行渲染为干净网格 PNG。自动列宽/折行/表头样式。"""
+def _render_tables_png(
+    blocks: list[dict],
+    out_path: str,
+    col_fracs: list[float] | None = None,
+    width_hint: float = 0.0,
+) -> None:
+    """把（已翻译的）表格块渲染为干净网格 PNG。
+
+    - 列宽：有 col_fracs（原表列宽占比）+ width_hint（原快照像素宽）时
+      等比缩放，与原图布局对齐（2026-09-07 用户反馈"和原图对不太齐"）；
+      否则按内容自动列宽。
+    - 跨列行（多级表头/分组分隔行）：空单元格向右并入内容格（colspan），
+      分隔行居中显示——与原表视觉层级一致。
+    - 对齐：首列左对齐，其余列水平居中（学术表格惯例，与原图一致）。"""
     font = _load_font(_TABLE_FONT_PX)
     bold = _load_font(_TABLE_FONT_PX, bold=True) or font
     font = font or bold
     measure = ImageDraw.Draw(Image.new("RGB", (8, 8)))
 
-    def _layout(rows: list[list[str]]):
+    def _fit_lines(text: str, maxw: float, base, bold: bool):
+        """优先单行：字号从基准逐级缩到 12px，放得下就不折行——
+        行高与原图一致（2026-09-07 用户反馈行高忽大忽小、断词难看）。"""
+        text = (text or "").replace("\n", " ").strip()
+        if not text:
+            return [""], base
+        for size in range(_TABLE_FONT_PX, 11, -1):
+            f = _load_font(size, bold=bold)
+            if f is None:
+                break
+            if measure.textlength(text, font=f) <= maxw:
+                return [text], f
+        return _wrap_cell(text, base, maxw, measure), base
+
+    def _layout(block: dict):
+        rows = block["rows"]
+        spans = block["spans"]
         ncol = max(len(r) for r in rows)
         rows = [list(r) + [""] * (ncol - len(r)) for r in rows]
-        col_w = []
-        for c in range(ncol):
-            w = _TABLE_MIN_COL_W
-            for r in rows:
-                for seg in str(r[c]).split("\n"):
-                    w = max(w, measure.textlength(seg, font=font))
-            col_w.append(min(int(w) + _TABLE_PAD_X * 2, _TABLE_MAX_COL_W))
-        grid = []
+        if col_fracs and len(col_fracs) == ncol and width_hint:
+            col_w = [
+                min(max(_TABLE_MIN_COL_W, int(f * width_hint)), _TABLE_MAX_COL_W)
+                for f in col_fracs
+            ]
+        else:
+            col_w = []
+            for c in range(ncol):
+                w = _TABLE_MIN_COL_W
+                for r in rows:
+                    for seg in str(r[c]).split("\n"):
+                        w = max(w, measure.textlength(seg, font=font))
+                col_w.append(min(int(w) + _TABLE_PAD_X * 2, _TABLE_MAX_COL_W))
+        # 每行渲染单元：(lines, 起列, 止列, 字体)；跨列行空格向右并入内容格
+        grid: list[list[tuple[list[str], int, int, object]]] = []
         for ri, r in enumerate(rows):
-            f = bold if ri == 0 else font
-            grid.append([_wrap_cell(c, f, col_w[ci] - _TABLE_PAD_X * 2, measure)
-                         for ci, c in enumerate(r)])
-        row_h = [max(len(c) for c in cells) * _TABLE_LINE_H + _TABLE_PAD_Y * 2
-                 for cells in grid]
-        return col_w, grid, row_h
+            is_header = ri == 0
+            if ri in spans:
+                cells: list[tuple[list[str], int, int, object]] = []
+                ci = 0
+                while ci < ncol:
+                    if not r[ci]:
+                        cells.append(([""], ci, ci, font))  # 前导空组
+                        ci += 1
+                        continue
+                    cj = ci
+                    while cj + 1 < ncol and not r[cj + 1]:
+                        cj += 1
+                    w = sum(col_w[ci : cj + 1]) - _TABLE_PAD_X * 2
+                    lines, f = _fit_lines(r[ci], w, font if not is_header else bold, is_header)
+                    cells.append((lines, ci, cj, f))
+                    ci = cj + 1
+                grid.append(cells)
+            else:
+                cells = []
+                for ci, c in enumerate(r):
+                    w = col_w[ci] - _TABLE_PAD_X * 2
+                    lines, f = _fit_lines(c, w, bold if is_header else font, is_header)
+                    cells.append((lines, ci, ci, f))
+                grid.append(cells)
+        row_h = [
+            max(len(c[0]) for c in cells) * _TABLE_LINE_H + _TABLE_PAD_Y * 2
+            for cells in grid
+        ]
+        return col_w, grid, row_h, ncol
 
-    blocks = [_layout(rows) for rows in tables]
-    W = max(sum(cw) for cw, _, _ in blocks) + 2
-    H = sum(sum(rh) for _, _, rh in blocks) + _TABLE_GAP * (len(blocks) - 1) + 2
+    layouts = [_layout(b) for b in blocks]
+    W = max(sum(l[0]) for l in layouts) + 2
+    H = sum(sum(l[2]) for l in layouts) + _TABLE_GAP * (len(layouts) - 1) + 2
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
 
     y = 1
-    for bi, (col_w, grid, row_h) in enumerate(blocks):
-        ncol = len(col_w)
+    for col_w, grid, row_h, ncol in layouts:
         xs = [1]
         for w in col_w:
             xs.append(xs[-1] + w)
         top = y
         for ri, cells in enumerate(grid):
             rh = row_h[ri]
-            if ri == 0:
-                d.rectangle([xs[0], y, xs[-1], y + rh], fill=_HEADER_BG)
-            f = bold if ri == 0 else font
-            for ci, lines in enumerate(cells):
+            y_end = y + rh
+            is_header = ri == 0
+            if is_header:
+                d.rectangle([xs[0], y, xs[-1], y_end], fill=_HEADER_BG)
+            for lines, c0, c1, f in cells:
+                gw = xs[c1 + 1] - xs[c0]
+                text_w = max((measure.textlength(ln, font=f) for ln in lines), default=0)
+                if c0 == 0:
+                    # 首列（含跨到首列的组）左对齐
+                    tx = xs[c0] + _TABLE_PAD_X
+                else:
+                    # 其余列/分组表头/分隔行居中
+                    tx = xs[c0] + max((gw - text_w) / 2, _TABLE_PAD_X)
                 ty = y + _TABLE_PAD_Y
-                tx = xs[ci] + _TABLE_PAD_X
                 for ln in lines:
                     d.text((tx, ty), ln, fill=_TEXT_COLOR, font=f)
                     ty += _TABLE_LINE_H
-            y += rh
-            d.line([xs[0], y, xs[-1], y], fill=_GRID_COLOR, width=1)
-        for x in xs:
+            # 横线（整行宽）
+            d.line([xs[0], y_end, xs[-1], y_end], fill=_GRID_COLOR, width=1)
+            # 竖线：逐列边界画本行高度，跨列组内部不画
+            spanned = set()
+            for _, c0, c1, _f in cells:
+                spanned.update(range(c0 + 1, c1 + 1))
+            for ci in range(1, ncol):
+                if ci not in spanned:
+                    d.line([xs[ci], y, xs[ci], y_end], fill=_GRID_COLOR, width=1)
+            y = y_end
+        for x in (xs[0], xs[-1]):
             d.line([x, top, x, y], fill=_GRID_COLOR, width=1)
         y += _TABLE_GAP
     img.save(out_path)
@@ -466,7 +574,8 @@ def _overlay_text(bg_path: str, lines: list[dict], region: list[float], out_path
 # 译制图版本号：改动生成逻辑时 +1，使旧译制图自动失效重生成
 # v3：表格改结构化重建（叠字方案对表格不可读，2026-09-06 用户反馈）
 # v4：列边界跨行聚类 + 续行合并（多行单元格错位，2026-09-06 用户截图）
-OVERLAY_VERSION = "v4"
+# v5：跨列行（多级表头/分组分隔行）+ 原比例列宽对齐原图（2026-09-07 用户截图）
+OVERLAY_VERSION = "v5"
 
 
 async def translate_figure(
@@ -507,14 +616,25 @@ async def translate_figure(
 
     # ---------- 表格：结构化重建（解析出真实行列才能走这条路） ----------
     if sidecar.get("kind") == "table":
-        tables = await asyncio.to_thread(_region_tables, src_pdf, page_num, region)
-        if tables:
-            if not await _translate_cells(tables, source_lang, target_lang, t_cfg):
+        parsed = await asyncio.to_thread(_region_tables, src_pdf, page_num, region)
+        blocks: list[dict] = []
+        col_fracs: list[float] | None = None
+        if isinstance(parsed, tuple):
+            blocks, col_fracs = parsed
+        if blocks:
+            if not await _translate_cells(
+                [b["rows"] for b in blocks], source_lang, target_lang, t_cfg
+            ):
                 return None
 
             def _render_tables() -> str | None:
                 try:
-                    _render_tables_png(tables, zh_png)
+                    _render_tables_png(
+                        blocks,
+                        zh_png,
+                        col_fracs=col_fracs,
+                        width_hint=(region[2] - region[0]) * _FIG_SCALE,
+                    )
                     return zh_png
                 except Exception as e:
                     global _last_error

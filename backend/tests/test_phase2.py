@@ -515,3 +515,49 @@ def test_mid_sentence_emphasis_not_split():
     text = "This _is_ important because the results hold across all settings."
     blocks = split_into_blocks(text)
     assert blocks == [text]  # 句中强调无终结符，不拆
+
+
+# ── 段融合检测（HippoRAG 实测：整批译文被塞进 <<<0>>> 标题段）──────────
+
+
+def test_fused_translation_detected():
+    from translate.sanitize import is_fused_translation
+    assert is_fused_translation(
+        "# **HippoRAG: Long-Term Memory for LLMs**",
+        "# **HippoRAG：大型语言模型的长期记忆**\n\n## 摘要\n\n摘要全文译文。\n\n"
+        "## 引言\n\n引言全文译文。\n\n## 方法\n\n方法全文译文。",
+    )
+
+
+def test_fused_translation_normal_not_flagged():
+    from translate.sanitize import is_fused_translation
+    assert not is_fused_translation("# **Title**", "# **标题**")
+    # 多段源译文段落更多不算融合（列表/分段本来就多段）
+    assert not is_fused_translation(
+        "Para one.\n\nPara two.",
+        "第一段。\n\n第二段。\n\n第三段。",
+    )
+
+
+def test_translate_chunk_fused_triggers_halving():
+    from unittest.mock import patch
+
+    from translate.providers.openai_compat import OpenAICompatProvider
+
+    p = OpenAICompatProvider()
+
+    async def fake_translate(text, src, tgt, cfg):
+        if "<<<" in text:
+            # 模拟段融合：标题段吞下整批译文，其余标记正常
+            return (
+                "<<<0>>>\n# 标题译\n\n## 摘要\n\n摘要全文。\n\n## 引言\n\n引言全文。\n"
+                "<<<1>>>\n作者一行译"
+            )
+        return f"译[{text[:12]}]"
+
+    with patch.object(p, "translate", side_effect=fake_translate):
+        out = asyncio.run(
+            p._translate_chunk(["# **Title**", "**Author**"], "en", "zh", {})
+        )
+    # 减半到单段后各自正确翻译，融合文本不落任何段
+    assert out == ["译[# **Title**]", "译[**Author**]"]

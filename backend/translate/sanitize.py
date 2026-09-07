@@ -163,6 +163,24 @@ def is_echo(original: str, translated: str, target_lang: str) -> bool:
     return len(re.findall(r"[A-Za-z]{2,}", o)) >= 3
 
 
+def is_fused_translation(original: str, translated: str) -> bool:
+    """**段融合**判定（用户反馈"只有题目但输出了一大段"，HippoRAG 实测
+    2026-09-07）：批量翻译时模型把整个批次的译文全塞进 <<<0>>> 段——
+    标题块的译文里带着摘要/引言/方法全文，而段数校验照样通过。
+
+    判据：原文只有 1 个段落、译文却拆出 ≥3 个段落（空行分隔）——
+    正常翻译不会凭空增加段落结构。命中后调用方应整批减半重试
+    （provider 侧）或视为未翻译重翻（缓存命中侧）。
+    """
+    t = (translated or "").strip()
+    o = (original or "").strip()
+    if not t or not o:
+        return False
+    src_paras = [p for p in re.split(r"\n\s*\n", o) if p.strip()]
+    out_paras = [p for p in re.split(r"\n\s*\n", t) if p.strip()]
+    return len(src_paras) <= 1 and len(out_paras) >= 3
+
+
 def is_formula_block(md: str) -> bool:
     """**纯公式块** → True（跳过翻译，译文=原文）。
 

@@ -457,6 +457,11 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                     and not sanitize.is_echo(
                         original, cached["translated"], target_lang
                     )
+                    # 融合条目（批量翻译时整批译文塞进单段）同样重翻：
+                    # HippoRAG 标题块译文曾带摘要/引言/方法全文（2026-09-07）
+                    and not sanitize.is_fused_translation(
+                        original, cached["translated"]
+                    )
                 ):
                     block["translated"] = cached["translated"]
                     stats["tr_cache_hit"] += 1

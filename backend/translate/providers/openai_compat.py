@@ -1,6 +1,7 @@
 import re
 
 import httpx
+from ..sanitize import is_fused_translation
 from .base import BaseTranslator
 
 # OpenAI 兼容协议实现：SiliconFlow 与 OpenAI 都提供标准的 /chat/completions，
@@ -192,6 +193,14 @@ class OpenAICompatProvider(BaseTranslator):
             out = await self.translate(merged, source_lang, target_lang, config)
             parsed = parse_segments(out, len(chunk))
             if all(i in parsed for i in range(len(chunk))):
+                # 段融合检测（HippoRAG 实测：模型把整批译文塞进 <<<0>>>，
+                # 标题块译文带着摘要/引言/方法全文，段数校验却通过）——
+                # 命中即减半重试，最终落到单段不再可能融合
+                if any(
+                    is_fused_translation(chunk[i], parsed[i])
+                    for i in range(len(chunk))
+                ):
+                    raise ValueError("疑似段融合（单段译文多段落膨胀）")
                 return [parsed[i] for i in range(len(chunk))]
             raise ValueError("段数不匹配")
         except Exception as e:

@@ -44,6 +44,10 @@ _MAX_FIG_RATIO = 0.92      # 上限（过滤整页背景）
 _MAX_FIG_TEXT_CHARS = 2000 # 区域内文本字符上限（兜底：防整页文本框误判；
                            # 矢量图表的轴标签/图例是真实文本，实测可达 1500+）
 _FIG_SCALE = 2.5           # 快照渲染倍率（与视觉 OCR 一致）
+_MERGE_GAP = 12.0          # 区域合并空隙容差（pt）：图表内文字行把绘图簇
+                           # 隔开 0~10pt，只并相交矩形会把一张图拆成多条横带
+                           # （实测 9.2pt 空隙拆成 4 份）；双栏正文列距 >18pt，
+                           # 12pt 不会跨栏误并
 
 
 def _clean_html(md: str) -> str:
@@ -61,8 +65,13 @@ def _clean_html(md: str) -> str:
     return md
 
 
-def _merge_rects(rects: list) -> list:
-    """合并相交矩形（迭代至稳定）。区域数量少，O(n²) 可接受。"""
+def _merge_rects(rects: list, gap: float = 0.0) -> list:
+    """合并相交矩形（迭代至稳定）。区域数量少，O(n²) 可接受。
+
+    gap > 0 时把「空隙不超过 gap」的相邻矩形也并到一起（膨胀探测、
+    取原矩形并集，不裁边）。必须有：图表内部的文字行不产生绘图簇，
+    簇与簇之间留有几 pt 空隙——只合并相交矩形会把同一张图拆成
+    多条横带（2026-09-07 TOG 论文 Figure 被拆 4 份踩坑）。"""
     rects = [pymupdf.Rect(r) for r in rects if r and r.width > 1 and r.height > 1]
     changed = True
     while changed:
@@ -70,9 +79,14 @@ def _merge_rects(rects: list) -> list:
         out: list = []
         while rects:
             r = rects.pop()
+            probe = (
+                pymupdf.Rect(r.x0 - gap, r.y0 - gap, r.x1 + gap, r.y1 + gap)
+                if gap > 0
+                else r
+            )
             for i, o in enumerate(out):
-                if r.intersects(o):
-                    out[i] = o | r  # 并集
+                if probe.intersects(o):
+                    out[i] = o | r  # 并集（不膨胀，保住真实边界）
                     changed = True
                     break
             else:
@@ -108,7 +122,7 @@ def _figure_regions(page, debug: bool = False) -> list:
         rects.extend(pymupdf.Rect(t.bbox) for t in page.find_tables().tables)
     except Exception:
         pass
-    merged = _merge_rects(rects)
+    merged = _merge_rects(rects, gap=_MERGE_GAP)
     if debug:
         print(
             f"[figure] p{page.number + 1}: 候选rect={len(rects)} "

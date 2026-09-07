@@ -114,6 +114,57 @@ def test_protect_formulas_keeps_plain_words():
     assert restore(translated) == "我们使用 adam_optimizer 与 32 的 batch_size，效果很好。"
 
 
+# ── sanitize.strip_prompt_echo（提示词背景信息回声剥离，2026-09-07）──
+
+
+def test_prompt_echo_title_stripped():
+    """译文开头的「论文标题：<原题>」回声行被剥掉（DALK 实测形态）。"""
+    from translate.sanitize import strip_prompt_echo
+
+    title = "**DALK: Dynamic Co-Augmentation of LLMs and KG to answer Alzheimer's Disease Questions with Scientific Literature**"
+    t = (
+        "论文标题：DALK: Dynamic Co-Augmentation of LLMs and KG to answer "
+        "Alzheimer's Disease Questions with Scientific Literature\n"
+        "为了解决这些局限性，我们提出了"
+    )
+    out = strip_prompt_echo(t, title)
+    assert out == "为了解决这些局限性，我们提出了"
+
+
+def test_prompt_echo_keeps_real_title_translation():
+    """标题块的正确翻译不能被误伤：内容与注入 doc_title 不一致就保留。"""
+    from translate.sanitize import strip_prompt_echo
+
+    title = "**DALK: Dynamic Co-Augmentation of LLMs and KG**"
+    assert strip_prompt_echo("DALK：大语言模型与知识图谱的动态协同增强", title) == (
+        "DALK：大语言模型与知识图谱的动态协同增强"
+    )
+    assert (
+        strip_prompt_echo("论文标题：DALK：动态协同增强框架", title)
+        == "论文标题：DALK：动态协同增强框架"
+    )
+
+
+def test_prompt_echo_glossary_stripped():
+    """术语表标签行 + 连续条目被剥，正文保留。"""
+    from translate.sanitize import strip_prompt_echo
+
+    t = (
+        "术语表（以下术语必须按给定译法翻译，全文保持一致）：\n"
+        "- knowledge graph → 知识图谱\n"
+        "- fine-tuning → 微调\n"
+        "正文译文从这里开始"
+    )
+    assert strip_prompt_echo(t) == "正文译文从这里开始"
+
+
+def test_prompt_echo_normal_text_untouched():
+    from translate.sanitize import strip_prompt_echo
+
+    t = "阿尔茨海默病（AD）是一种神经退行性疾病。"
+    assert strip_prompt_echo(t, "**some title**") == t
+
+
 # ── openai_compat.parse_segments ─────────────────────────────────────
 
 

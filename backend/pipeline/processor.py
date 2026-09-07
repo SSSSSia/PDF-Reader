@@ -458,7 +458,11 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                     chunk, protected, outs
                 ):
                     block["translated"] = sanitize.strip_stray_emphasis(
-                        restore(translated or "")
+                        restore(
+                            sanitize.strip_prompt_echo(
+                                translated or "", t_cfg.get("doc_title")
+                            )
+                        )
                     )
                     write_cache(settings.cache_dir, key, {"translated": block["translated"]})
                     done += 1

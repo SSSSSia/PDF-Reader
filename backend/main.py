@@ -133,7 +133,9 @@ async def api_block_translate(payload: dict):
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"翻译失败: {e}")
-    out = sanitize.strip_stray_emphasis(restore(translated or ""))
+    out = sanitize.strip_stray_emphasis(
+        restore(sanitize.strip_prompt_echo(translated or ""))
+    )
     key = translate_key(
         text_hash(original),
         target_lang,

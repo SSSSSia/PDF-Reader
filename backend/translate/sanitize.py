@@ -105,6 +105,43 @@ def strip_stray_emphasis(text: str) -> str:
     return "\n".join(out)
 
 
+# 系统提示词背景信息的回声形态（2026-09-07 用户反馈：译文开头多出
+# 「论文标题：DALK: ...」原题行——模型把提示词首行照抄进了译文）
+_ECHO_TITLE = re.compile(r"^\s*(?:#{1,6}\s*)?\*{0,2}论文标题\s*[:：]\s*(.+?)\*{0,2}\s*$")
+_ECHO_GLOSS_LABEL = re.compile(r"^\s*(?:#{1,6}\s*)?\*{0,2}术语表")
+_ECHO_GLOSS_ITEM = re.compile(r"^\s*[-*]\s*.+\s→\s")
+
+
+def strip_prompt_echo(translated: str, doc_title: str | None = None) -> str:
+    """剥离被回声进译文的提示词背景信息行（论文标题/术语表）。
+
+    规则保守，只处理译文**开头**的标签行：
+    - 论文标题行仅当内容与注入的 doc_title 一致（忽略 ** 包装）才剥——
+      模型自拟的标题译文（如标题块的正确翻译）不受影响；
+    - 术语表行（标签行 + 连续 "- x → y" 条目）直接剥，正文不会以
+      这种形态开头。
+    """
+    if not translated:
+        return translated
+    lines = translated.lstrip("\n").split("\n")
+    changed = False
+    if doc_title:
+        m = _ECHO_TITLE.match(lines[0]) if lines else None
+        if m:
+            norm = lambda s: s.replace("*", "").strip()
+            if norm(m.group(1)) == norm(doc_title):
+                lines = lines[1:]
+                changed = True
+                while lines and not lines[0].strip():
+                    lines = lines[1:]
+    while lines and _ECHO_GLOSS_LABEL.match(lines[0]):
+        lines = lines[1:]
+        changed = True
+        while lines and _ECHO_GLOSS_ITEM.match(lines[0]):
+            lines = lines[1:]
+    return "\n".join(lines).strip() if changed else translated
+
+
 def is_echo(original: str, translated: str, target_lang: str) -> bool:
     """译文"回声"判定：译中文时译文完全没有汉字而原文是英文段落
     （≥3 个英文单词）——模型原样返回了原文。

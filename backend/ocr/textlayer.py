@@ -229,7 +229,10 @@ def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) ->
                 clip=r, matrix=pymupdf.Matrix(_FIG_SCALE, _FIG_SCALE)
             )
             pix.save(path)
-        except Exception:
+        except Exception as e:
+            # 静默 continue 曾把整条快照管线打空且无任何日志（目录不存在
+            # 时 save 必炸，2026-09-07 TOG 论文全页无图踩坑）——必须留痕
+            print(f"[figure] p{page_num + 1}: 快照保存失败 {os.path.basename(path)}: {e}")
             continue  # 单个快照失败不阻断整页
         if debug:
             print(f"[figure] p{page_num + 1}: 快照#{k}({kind}) -> {os.path.basename(path)} {r}")
@@ -316,6 +319,9 @@ def extract_pages(
         # 时，生成的引用在部分系统上无法解析（实测踩坑）
         if image_dir:
             image_dir = os.path.realpath(image_dir)
+            # 目录必须存在：pix.save 对不存在的目录抛错，曾把整个图表
+            # 快照管线静默打空（目录由调用方建时新文件首跑必炸，实测踩坑）
+            os.makedirs(image_dir, exist_ok=True)
         out: list[str | None] = []
         for idx, pno in enumerate(page_nums):
             # 1) 先在原文档上快照（渲染含图内文字，所见即所得）

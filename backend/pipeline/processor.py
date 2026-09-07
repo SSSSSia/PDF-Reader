@@ -31,7 +31,8 @@ MAX_CONCURRENCY = 8
 # v4：图表内部文字 redact 剔除（不再与快照图重复），markdown 内容变化。
 # v5：表格也按快照处理（文本表格转 markdown 必错位，用户决策），markdown 变化。
 # v6：快照按类型命名（tab_*/fig_*），sidecar 记录 kind 与源 PDF，markdown 变化。
-TEXT_LAYER_MODEL = "text-layer-v6"
+# v7：修复快照目录未创建导致 save 全部静默失败（首跑新文件无图无快照，TOG 实测）。
+TEXT_LAYER_MODEL = "text-layer-v7"
 
 # 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
 # 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。
@@ -191,6 +192,7 @@ async def _load_or_run_ocr(file_path: str, pdf_hash: str, config: dict, job: dic
     job["progress"] = 8
 
     image_dir = os.path.join(cache_dir, "images", pdf_hash[:16])
+    os.makedirs(image_dir, exist_ok=True)  # 图表快照的落盘目录（曾漏建致快照全灭）
     pages: list = [None] * total_pages
     vision_pages: list[int] = []
 

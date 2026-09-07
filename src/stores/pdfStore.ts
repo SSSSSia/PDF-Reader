@@ -14,6 +14,12 @@ interface PdfState {
   setFile: (file: File | null) => void;
   setFilePath: (path: string | null) => void;
   setPages: (pages: PageResult[]) => void;
+  /** 手动单块翻译回写（2026-09-07）：按 page+block_id 定位更新译文 */
+  updateBlockTranslated: (
+    page: number,
+    blockId: number,
+    translated: string,
+  ) => void;
   setCurrentPage: (page: number) => void;
   setLoading: (loading: boolean) => void;
   setProgress: (progress: number) => void;
@@ -35,6 +41,19 @@ export const usePdfStore = create<PdfState>((set) => ({
   setFile: (file) => set({ file }),
   setFilePath: (path) => set({ filePath: path }),
   setPages: (pages) => set({ pages }),
+  updateBlockTranslated: (page, blockId, translated) =>
+    set((state) => ({
+      pages: state.pages.map((p) =>
+        p.page !== page
+          ? p
+          : {
+              ...p,
+              blocks: p.blocks.map((b) =>
+                b.block_id === blockId ? { ...b, translated } : b,
+              ),
+            },
+      ),
+    })),
   setCurrentPage: (page) => set({ currentPage: page }),
   setLoading: (isLoading) => set({ isLoading }),
   setProgress: (progress) => set({ progress }),

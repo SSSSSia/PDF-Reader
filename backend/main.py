@@ -101,6 +101,49 @@ async def api_figure_translate(payload: dict):
     return {"translated": f"![Table]({zh.replace(os.sep, '/')})"}
 
 
+@app.post("/api/block/translate")
+async def api_block_translate(payload: dict):
+    """单块手动翻译/重翻（2026-09-07 用户需求：逐段点按触发）。
+
+    用于两类场景：某段漏翻（"待翻译…"残留）或译文效果不佳，用户手动
+    点按该段的「译/重译」按钮重新翻译。与全文管线走同一链路
+    （公式保护 → 翻译 → 还原 → 清理），结果写回**同一缓存 key**
+    （text_hash + 目标语 + model + PROMPT_VERSION），重开文档不丢。
+    注意：同 key 覆盖写，故"重翻"天然 bypass 旧缓存。
+    """
+    from translate.base import translate_text
+    from translate import sanitize
+    from cache.file_cache import translate_key, text_hash, write_cache
+    from translate.providers.openai_compat import PROMPT_VERSION
+
+    original = str(payload.get("original") or "")
+    if not original.strip():
+        raise HTTPException(status_code=400, detail="原文为空")
+    t_cfg = dict(settings.translate_config)
+    source_lang = payload.get("source_lang") or t_cfg.get(
+        "source_language", "zh"
+    )
+    target_lang = payload.get("target_lang") or t_cfg.get(
+        "target_language", "en"
+    )
+    protected, restore = sanitize.protect_formulas(original)
+    try:
+        translated = await translate_text(
+            protected, source_lang, target_lang, t_cfg
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"翻译失败: {e}")
+    out = sanitize.strip_stray_emphasis(restore(translated or ""))
+    key = translate_key(
+        text_hash(original),
+        target_lang,
+        t_cfg.get("model", ""),
+        PROMPT_VERSION,
+    )
+    write_cache(settings.cache_dir, key, {"translated": out})
+    return {"translated": out}
+
+
 def _make_test_png_b64() -> str:
     """生成 32x32 纯色 PNG 的 base64，用于 OCR 连接测试的最小图片载荷。"""
     size = 32

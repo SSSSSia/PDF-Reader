@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import MarkdownText from "./common/MarkdownText";
 import TranslatableImage from "./common/TranslatableImage";
+import BlockTranslateButton from "./common/BlockTranslateButton";
 import ReaderToolbar from "./ReaderToolbar";
 
 /**
@@ -103,7 +104,11 @@ export default function BilingualPage() {
                 className="grid grid-cols-1 border-b border-dashed border-slate-200 dark:border-slate-700 md:grid-cols-2 md:gap-x-8"
                 style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" }}
               >
-                <div className="paper-font py-3 pr-2 text-justify text-slate-900 dark:text-slate-100">
+                <div className="paper-font group relative py-3 pr-2 text-justify text-slate-900 dark:text-slate-100">
+                  {/* 悬停浮现的单块翻译/重翻按钮（2026-09-07 用户需求） */}
+                  <span className="absolute right-1 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <BlockTranslateButton block={b} />
+                  </span>
                   <MarkdownText text={b.original} />
                 </div>
                 <div className="paper-font py-3 text-justify text-blue-900 dark:text-blue-100 md:border-l md:border-slate-200 md:pl-2 dark:md:border-slate-700">

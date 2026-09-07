@@ -60,6 +60,28 @@ export async function translateFigureImage(path: string): Promise<string> {
   return data.translated;
 }
 
+/**
+ * 单块手动翻译/重翻（2026-09-07 用户需求：逐段点按触发）。
+ * 后端与全文管线同链路（公式保护→翻译→还原→清理），结果写回同一
+ * 缓存 key，重开文档不丢。sidecar 后端 HTTP 双模可用（同 translateFigureImage）。
+ */
+export async function translateBlock(
+  original: string,
+  sourceLang: string,
+  targetLang: string,
+): Promise<string> {
+  const data = (await apiFetch(`${API_BASE}/api/block/translate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      original,
+      source_lang: sourceLang,
+      target_lang: targetLang,
+    }),
+  })) as { translated: string };
+  return data.translated;
+}
+
 /** 启动流水线，返回与 Rust run_pipeline 一致的 JSON 字符串 */
 export async function runPipeline(filePath: string): Promise<string> {
   if (isTauri()) {

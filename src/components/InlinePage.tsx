@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import MarkdownText from "./common/MarkdownText";
 import TranslatableImage from "./common/TranslatableImage";
+import BlockTranslateButton from "./common/BlockTranslateButton";
 import ReaderToolbar from "./ReaderToolbar";
 
 /**
@@ -84,7 +85,11 @@ export default function InlinePage() {
                 </figure>
               ) : (
                 <>
-                  <div className="text-slate-900 dark:text-slate-100 paper-font text-justify">
+                  <div className="text-slate-900 dark:text-slate-100 paper-font text-justify group relative">
+                    {/* 悬停浮现的单块翻译/重翻按钮（2026-09-07 用户需求） */}
+                    <span className="absolute right-0 top-0 z-10 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                      <BlockTranslateButton block={b} />
+                    </span>
                     <MarkdownText text={b.original} />
                   </div>
                   {b.translated && (

@@ -36,7 +36,8 @@ MAX_CONCURRENCY = 8
 # v7：修复快照目录未创建导致 save 全部静默失败（首跑新文件无图无快照，TOG 实测）。
 # v8：区域合并加空隙容差（图内文字行隔开的绘图簇不再把一张图拆成多条横带）。
 # v9：清理 <u> 下划线标签（用户反馈"下划线还在"），markdown 内容变化。
-TEXT_LAYER_MODEL = "text-layer-v9"
+# v10：快照区域外扩 3pt（表格右缘数字被裁，HippoRAG Table 5 实测），快照内容变化。
+TEXT_LAYER_MODEL = "text-layer-v10"
 
 # 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
 # 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。
@@ -424,7 +425,9 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                 for (_, block, key), (p, restore), translated in zip(
                     chunk, protected, outs
                 ):
-                    block["translated"] = restore(translated or "")
+                    block["translated"] = sanitize.strip_stray_emphasis(
+                        restore(translated or "")
+                    )
                     write_cache(settings.cache_dir, key, {"translated": block["translated"]})
                     done += 1
                     job["progress"] = 30 + int(done / total * 70)
@@ -438,6 +441,21 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         except Exception:
             # 单个 chunk 失败不应让整本书前功尽弃：已完成的保留，失败的留空
             pass
+
+        # 失败块补翻一轮（用户截图反馈"待翻译…"残留）：瞬时故障（限流/
+        # 网络抖动）导致的空译文，重试一次即可恢复；仍失败保持留空不阻塞
+        retry = [
+            (page, block, key)
+            for page, block, key in pending
+            if not (block.get("translated") or "").strip()
+        ]
+        if retry:
+            print(f"[translate] {len(retry)} 个块译文为空，补翻一轮")
+            retry_chunks = [retry[i : i + 10] for i in range(0, len(retry), 10)]
+            try:
+                await asyncio.gather(*[_translate_chunk(c) for c in retry_chunks])
+            except Exception:
+                pass
 
         # 译制图任务收尾：与文本翻译并发执行，文本翻完这里等它们落盘。
         # 任何一个失败只影响那一张图（block 停留在回退原图），不阻断。

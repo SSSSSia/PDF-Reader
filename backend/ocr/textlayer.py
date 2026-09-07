@@ -233,7 +233,10 @@ def _snapshot_figures(doc, page_num: int, image_dir: str, debug: bool = True) ->
     except Exception:
         table_boxes = []
     refs: list[str] = []
-    for k, r in enumerate(_figure_regions(page, debug=debug)):
+    pad = 3.0  # 快照外扩（pt）：实测 find_tables/绘图簇 bbox 会裁掉表格右缘
+    # 最后一个数字（HippoRAG Table 5 "77.4" 只剩半个 "5"），小外扩零风险
+    for k, r0 in enumerate(_figure_regions(page, debug=debug)):
+        r = (r0 + (-pad, -pad, pad, pad)) & page.rect
         kind = "figure"
         for tb in table_boxes:
             inter = r & tb

@@ -92,6 +92,19 @@ def protect_formulas(text: str) -> tuple[str, object]:
     return " ".join(out_tokens), restore
 
 
+def strip_stray_emphasis(text: str) -> str:
+    """清理译文里的孤儿 markdown 强调符。
+
+    实测（HippoRAG "5 讨论**"）：模型给标题补 `**` 却丢了另一半，
+    成对强调符是合法加粗必须保留；单行内 `**` 数量为奇数 = 有孤儿，
+    整行剔除（宁可不加粗，不留裸星号）。
+    """
+    out = []
+    for ln in (text or "").split("\n"):
+        out.append(ln.replace("**", "") if ln.count("**") % 2 == 1 else ln)
+    return "\n".join(out)
+
+
 def is_formula_block(md: str) -> bool:
     """**纯公式块** → True（跳过翻译，译文=原文）。
 

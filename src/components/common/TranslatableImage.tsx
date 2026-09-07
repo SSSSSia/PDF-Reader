@@ -55,7 +55,7 @@ export default function TranslatableImage({ md }: { md: string }) {
               ? "生成失败，点击重试"
               : "生成译制图：保留表格排版，翻译表内文字"
           }
-          className={`absolute right-2 top-2 rounded-md border px-2.5 py-1 text-xs shadow-sm transition-colors ${
+          className={`absolute right-3 -top-3 rounded-md border px-2.5 py-1 text-xs shadow-sm transition-colors ${
             state === "err"
               ? "border-red-300 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800 dark:bg-red-950 dark:text-red-400"
               : "border-slate-300 bg-white/90 text-slate-600 hover:border-blue-400 hover:text-blue-600 dark:border-slate-600 dark:bg-slate-900/90 dark:text-slate-300 dark:hover:text-blue-400"

@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { assetUrl } from "../../lib/bridge";
+import { assetUrl, openExternal } from "../../lib/bridge";
 
 /**
  * Markdown 渲染组件：OCR/文本层返回的是 markdown（含表格/标题/公式/图片引用），
@@ -19,6 +19,22 @@ export default function MarkdownText({ text }: { text: string }) {
         remarkPlugins={[remarkGfm]}
         urlTransform={(url) => url}
         components={{
+          a: ({ href, children }) => {
+            // 链接不在软件内打开（会顶掉整个阅读界面）：
+            // Tauri 内经 shell.open 交给默认浏览器，浏览器内开新标签页
+            const url = typeof href === "string" ? href : "";
+            return (
+              <a
+                href={url}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (url) openExternal(url).catch(() => {});
+                }}
+              >
+                {children}
+              </a>
+            );
+          },
           img: ({ src, alt }) => {
             const raw = typeof src === "string" ? src : "";
             return (

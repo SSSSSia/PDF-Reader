@@ -20,6 +20,16 @@ export function isTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
 
+/** 用系统默认浏览器（Tauri 内为 shell.open，浏览器内为新标签页）打开外部链接。 */
+export async function openExternal(url: string): Promise<void> {
+  if (isTauri()) {
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(url);
+  } else {
+    window.open(url, "_blank", "noopener");
+  }
+}
+
 /** fetch 包装：非 2xx 一律抛错（fetch 对 4xx/5xx 默认不 reject，会导致静默失败） */
 async function apiFetch(url: string, init?: RequestInit): Promise<unknown> {
   const r = await fetch(url, init);

@@ -31,7 +31,7 @@ function nodeText(node: unknown): string {
  */
 export default function MarkdownText({ text }: { text: string }) {
   return (
-    <div className="prose prose-sm max-w-none dark:prose-invert sm:prose-base prose-headings:my-2 prose-p:my-1.5 prose-table:my-2 prose-li:my-0.5 prose-pre:my-2 prose-img:my-2 prose-img:rounded-lg">
+    <div className="prose prose-sm max-w-none dark:prose-invert sm:prose-base prose-headings:my-2 prose-p:my-1.5 prose-table:my-2 prose-li:my-0.5 prose-pre:my-2 prose-img:my-2 prose-img:rounded-lg prose-h1:text-xl prose-h1:leading-snug prose-h2:text-lg prose-h2:leading-snug prose-h3:text-base prose-h4:text-base">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}

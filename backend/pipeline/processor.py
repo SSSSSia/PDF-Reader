@@ -45,7 +45,10 @@ MAX_CONCURRENCY = 8
 # v13：插图锚定收紧（caption 须带标点，正文 "Table 4 illustrates" 不再
 #      误当锚点）且改在列重排**前**执行（重排打乱第 k↔第 k 配对，实测
 #      Figure 3 快照配到 Table 4 caption），图片段随 caption 一起重排。
-TEXT_LAYER_MODEL = "text-layer-v14"
+# v15：伪标题降级（2026-09-08 用户反馈"这两句不是标题"）——大字号强调句
+#      （研究问句等）被 pymupdf4llm 误判成 # 标题：巨字渲染+模型当标题
+#      翻一半。句子型标题降级为粗体段落，旧缓存需失效重提。
+TEXT_LAYER_MODEL = "text-layer-v15"
 
 # 视觉 OCR 缓存版本后缀。v2：OCR 结果顶部插入整页快照（扫描页图片/表格可见），
 # 旧缓存无快照需失效——会使扫描页重跑一次视觉 OCR（产生一次 API 调用）。

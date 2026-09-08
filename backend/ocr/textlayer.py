@@ -155,6 +155,56 @@ def _clean_html(md: str) -> str:
     return md
 
 
+# ── 伪标题降级（2026-09-08 用户反馈"这两句不是标题"）────────────────────
+# pymupdf4llm 的字号启发式会把论文里的大字号强调句（研究问题、引导问句——
+# 排版上大号粗斜体但语义是正文）误判成 markdown 标题。双重后果：
+# ① 前端 prose h1 渲染出突兀巨字；② 模型把问句当标题处理，引号内保留
+# 英文只翻一半（GraphRAG-Bench 实测："Does…retrieval?"原样保留+外面拼
+# "的推理能力"）。句子特征明确的"标题"降级为粗体段落：保留强调语义，
+# 真标题（编号式/短语式）不受影响。
+_HEADING_LINE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.M)
+# 去掉强调符号/引号/括号后的"裸文本"（保留空格供词数统计），用于句子特征判定
+_HEADING_STRIP = re.compile(r"[*_`\"'\u201c\u201d\u2018\u2019()\[\]]")
+# 句子结尾（允许尾随引号/括号）
+_SENT_END = re.compile(r"[?！？!.\u3002][\"'\u201d\u2019)]*$")
+# 数字编号开头的真标题（"1. Introduction"、"4.2 Method"）
+_NUM_HEADING = re.compile(r"^\d+(\.\d+)*[.:）)]?\s")
+
+
+def _demote_sentence_headings(md: str) -> str:
+    """把句子特征明确的 markdown 标题行降级为粗体段落。
+
+    判定（对去符号裸文本）：
+    - 以 ?/！/。 类句末标点结尾（允许尾随引号）→ 问句/感叹句，降级；
+      但句号结尾需同时 ≥6 词且非数字编号开头（真标题偶带句号，
+      如 "1. Introduction."——编号开头或过短的保留）；
+    - ≥14 词的超长"标题"基本都是句子，直接降级。
+    降级产物保留原行内部的全部强调标记，只去掉行首 #。"""
+
+    def repl(m: re.Match) -> str:
+        body = m.group(2)
+        plain = _HEADING_STRIP.sub("", body)
+        words = len(plain.split())
+        demote = False
+        if _SENT_END.search(plain):
+            # 句号结尾的降级门槛更高：真标题偶带句号（如 "1. Introduction."），
+            # 编号开头或 <6 词的保留
+            demote = not (
+                plain[-1] in ".。\u3002"
+                and (_NUM_HEADING.match(plain) or words < 6)
+            )
+        elif words >= 14:
+            demote = True  # 超长"标题"基本都是句子
+        if not demote:
+            return m.group(0)
+        # body 已被 **..** 整体包裹时直接去 #（再包一层会出 **** 四星）
+        if body.startswith("**") and body.endswith("**"):
+            return body
+        return "**" + body + "**"
+
+    return _HEADING_LINE.sub(repl, md)
+
+
 def _merge_rects(rects: list, gap: float = 0.0) -> list:
     """合并相交矩形（迭代至稳定）。区域数量少，O(n²) 可接受。
 
@@ -614,6 +664,8 @@ def extract_pages(
             md = (c.get("text") or "").strip()
             if md:
                 md = _clean_html(md)
+                # 伪标题降级：大字号强调句被误判成标题会巨字渲染+翻译劣化
+                md = _demote_sentence_headings(md)
                 if image_dir:
                     md = _normalize_image_refs(md, image_dir)
                     # 先锚定插图（此时 markdown 仍是页面 y 带顺序），再列重排。

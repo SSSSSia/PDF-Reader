@@ -40,3 +40,47 @@ def test_entities_restored():
 def test_clean_text_untouched():
     text = "普通中文段落，with English words, 100% 不受影响。"
     assert _clean_html(text) == text
+
+
+# ── 伪标题降级（2026-09-08 用户反馈"这两句不是标题"）────────────────────
+
+from ocr.textlayer import _demote_sentence_headings
+
+
+def test_question_heading_demoted():
+    """GraphRAG-Bench 实测形态：研究问句被字号启发式判成一级标题。"""
+    src = '# **_\u201cDoes graph augmentation truly enhance reasoning capabilities beyond simple retrieval?\u201d_**'
+    out = _demote_sentence_headings(src)
+    assert out.startswith("**") and not out.startswith("#")
+    assert "Does graph augmentation" in out
+
+
+def test_long_sentence_heading_demoted():
+    """≥14 词的超长'标题'基本都是句子。"""
+    src = "# **A very long emphasized sentence that keeps going and going with many words inside**"
+    assert _demote_sentence_headings(src).startswith("**")
+
+
+def test_real_headings_untouched():
+    """真标题（短语/编号式）保留原样。"""
+    assert _demote_sentence_headings("# **GraphRAG-Bench: Challenging Benchmarks**") == "# **GraphRAG-Bench: Challenging Benchmarks**"
+    assert _demote_sentence_headings("## **1 Introduction**") == "## **1 Introduction**"
+    assert _demote_sentence_headings("## **Abstract**") == "## **Abstract**"
+
+
+def test_numbered_period_heading_kept():
+    """编号+句号开头的真标题（'1. Introduction.'）不降级。"""
+    src = "## 1. Introduction to methods used here extensively today"
+    assert _demote_sentence_headings(src) == src
+
+
+def test_short_period_heading_kept():
+    """句号结尾但 <6 词的短语标题保留。"""
+    src = "# Next Generation Systems."
+    assert _demote_sentence_headings(src) == src
+
+
+def test_chinese_question_heading_demoted():
+    src = "# \u201c\u56fe\u589e\u5f3a\u771f\u7684\u80fd\u8d85\u8d8a\u7b80\u5355\u68c0\u7d22\u5417\uff1f\u201d"
+    out = _demote_sentence_headings(src)
+    assert out.startswith("**") and not out.startswith("#")

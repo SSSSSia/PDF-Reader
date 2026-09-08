@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import { useUiStore } from "../stores/uiStore";
+import { usePdfStore } from "../stores/pdfStore";
 import ExportBar from "./ExportBar";
 
 /**
@@ -8,10 +9,13 @@ import ExportBar from "./ExportBar";
  * 注：原 PdfViewer 页码导航已随「整篇连续滚动」改版移除（用户决策 2026-09-06）。
  * 「原版」为叠加视图（阶段5-T2/D6）：pdfjs 原样渲染当前 PDF + 块坐标译文浮层，
  * 进入时保持当前路由，退出（再点对照/紧跟）回到提取式视图——现有效果完整保留。
+ * 阶段6-T3：源 PDF 缺失（从主页重开已删/移动的文档）时「原版」禁用并提示。
  */
 export default function ReaderToolbar() {
   const { mode, setMode, readerMode, setReaderMode } = useUiStore();
+  const filePath = usePdfStore((s) => s.filePath);
   const navigate = useNavigate();
+  const sourceMissing = !filePath;
 
   // 切换模式同时跳转对应路由（两个视图各自是独立页面组件）
   const switchMode = (m: "bilingual" | "inline") => {
@@ -57,8 +61,14 @@ export default function ReaderToolbar() {
         <button
           role="tab"
           aria-selected={originalActive}
+          disabled={sourceMissing}
+          title={
+            sourceMissing
+              ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
+              : "按原版排版对照译文"
+          }
           onClick={() => setReaderMode(originalActive ? "parallel" : "original")}
-          className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
+          className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
             originalActive
               ? "bg-white text-blue-700 shadow-sm dark:bg-slate-700 dark:text-blue-300"
               : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"

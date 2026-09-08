@@ -3,11 +3,24 @@ import { useNavigate } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
 import { useOcr } from "../hooks/useOcr";
-import { openFileDialog, uploadFile, isTauri } from "../lib/bridge";
+import { openFileDialog, uploadFile, isTauri, listDocs, openDoc } from "../lib/bridge";
+import type { DocMeta } from "../types";
 import LoadingSpinner from "./common/LoadingSpinner";
 
 export default function MainPage() {
-  const { setFile, setFilePath, file, pages, isLoading, progress, error } = usePdfStore();
+  const {
+    setFile,
+    setFilePath,
+    file,
+    pages,
+    isLoading,
+    progress,
+    error,
+    setError,
+    setResult,
+    setCurrentPage,
+    setPages,
+  } = usePdfStore();
   const { mode } = useUiStore();
   const { processFile } = useOcr();
   const navigate = useNavigate();
@@ -15,6 +28,16 @@ export default function MainPage() {
   // 阶段1-T2：跳转时机由「全部翻译完成」提前到「pages 就绪（OCR 完成）」。
   // 用 ref 保证同一文件只跳一次；处理新文件时重置。
   const navigatedRef = useRef(false);
+  // 阶段6-T3：主页"已翻译文章"列表（持久化文档索引）
+  const [docs, setDocs] = useState<DocMeta[] | null>(null);
+  const [openingId, setOpeningId] = useState<string | null>(null);
+
+  // 首次进入主页拉取列表；从阅读页返回时刷新（可能刚翻完新文档）
+  useEffect(() => {
+    listDocs()
+      .then(setDocs)
+      .catch(() => setDocs([]));
+  }, []);
 
   // pages 首次非空（后端 OCR 完成、progress≈30）即进入阅读页，原文立即可见、译文渐进流入
   useEffect(() => {
@@ -74,6 +97,33 @@ export default function MainPage() {
     void processFile(selected);
   };
 
+  /** 打开已翻译文章（阶段6-T3）：缓存重建秒开，不重跑管线 */
+  const handleOpenDoc = async (doc: DocMeta) => {
+    if (openingId) return;
+    setOpeningId(doc.doc_id);
+    setError(null);
+    try {
+      const r = await openDoc(doc.doc_id);
+      setFile({
+        name: `${doc.title}.pdf`,
+        size: 0,
+        type: "application/pdf",
+        path: r.file_exists ? doc.file_path : "",
+      } as any);
+      // 源文件缺失：filePath 置 null（原版模式/式按钮自动禁用），对照/紧跟纯缓存可用
+      setFilePath(r.file_exists ? doc.file_path : null);
+      setResult(null);
+      setCurrentPage(0);
+      navigatedRef.current = true; // 直接导航，避免 pages effect 重复跳转
+      setPages(r.pages);
+      navigate("/reader/bilingual");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOpeningId(null);
+    }
+  };
+
   const handleBrowse = async () => {
     const selected = await openFileDialog();
     if (!selected) return;
@@ -122,6 +172,51 @@ export default function MainPage() {
           识别完成后自动进入阅读，译文边译边显示
         </p>
       </div>
+
+      {/* 阶段6-T3：已翻译文章列表（持久化索引，点击缓存重建秒开） */}
+      {docs !== null && docs.length > 0 && (
+        <div className="mt-8 w-full max-w-lg animate-fade-in">
+          <h2 className="mb-2.5 text-sm font-semibold text-slate-500 dark:text-slate-400">
+            已翻译文章（{docs.length}）
+          </h2>
+          <ul className="space-y-2">
+            {docs.map((d) => (
+              <li key={d.doc_id}>
+                <button
+                  onClick={() => handleOpenDoc(d)}
+                  disabled={openingId !== null}
+                  title={
+                    d.file_exists === false
+                      ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
+                      : "打开已翻译内容（秒开，不重新翻译）"
+                  }
+                  className="card w-full px-4 py-3 text-left transition-colors duration-150 hover:border-blue-400 disabled:cursor-wait disabled:opacity-60 dark:hover:border-blue-500"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {d.title}
+                    </span>
+                    {d.file_exists === false && (
+                      <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                        源文件缺失
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    {d.translated_at} · {d.page_count} 页
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {openingId && (
+        <div className="mt-4 w-full max-w-lg animate-fade-in">
+          <LoadingSpinner text="正在打开…" />
+        </div>
+      )}
 
       {file && (
         <div className="card mt-4 w-full max-w-lg px-4 py-3 animate-fade-in">

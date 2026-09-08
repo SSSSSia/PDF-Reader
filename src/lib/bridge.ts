@@ -13,6 +13,7 @@
  */
 import { invoke, convertFileSrc as tauriConvertFileSrc } from "@tauri-apps/api/core";
 import { open as tauriOpen } from "@tauri-apps/plugin-dialog";
+import type { DocMeta, OpenDocResult } from "../types";
 
 const API_BASE = "http://localhost:8000";
 
@@ -98,6 +99,27 @@ export async function recognizeBlockFormula(
     body: JSON.stringify({ file_path: filePath, page, bbox }),
   })) as { latex: string; cached: boolean };
   return data;
+}
+
+/**
+ * 主页"已翻译文章"列表（阶段6-T3）：读后端持久化文档索引。
+ * Tauri/浏览器双模都直连本地后端（索引只在后端，无需走 Rust 命令）。
+ */
+export async function listDocs(): Promise<DocMeta[]> {
+  const data = (await apiFetch(`${API_BASE}/api/docs`)) as { docs: DocMeta[] };
+  return data.docs ?? [];
+}
+
+/**
+ * 重开已翻译文档（阶段6-T3）：按 doc_id 让后端从缓存重建会话，
+ * 零翻译 API 调用、秒开。源文件缺失时 file_exists=false（原版模式禁用）。
+ */
+export async function openDoc(docId: string): Promise<OpenDocResult> {
+  return apiFetch(`${API_BASE}/api/docs/open`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ doc_id: docId }),
+  }) as Promise<OpenDocResult>;
 }
 
 /** 启动流水线，返回与 Rust run_pipeline 一致的 JSON 字符串 */

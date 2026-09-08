@@ -629,8 +629,3 @@ def extract_pages(
         return out
     finally:
         doc.close()
-
-
-def extract_all(file_path: str, image_dir: str | None = None) -> list[str | None]:
-    """提取全部页面的文本层 Markdown（兼容入口，内部走 extract_pages）。"""
-    return extract_pages(file_path, list(range(count_pages(file_path))), image_dir)

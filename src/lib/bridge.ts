@@ -167,17 +167,6 @@ export async function testApiConnection(
   }) as Promise<{ status: string; model: string }>;
 }
 
-/** 检查文件是否存在，与 Rust check_file_exists 一致 */
-export async function checkFileExists(filePath: string): Promise<boolean> {
-  if (isTauri()) {
-    return (await invoke("check_file_exists", { file_path: filePath })) as boolean;
-  }
-  const data = (await apiFetch(
-    `${API_BASE}/api/file/exists?path=${encodeURIComponent(filePath)}`,
-  )) as { exists: boolean };
-  return !!data.exists;
-}
-
 /** 将文件路径转为可访问的 URL：Tauri 用 convertFileSrc，浏览器用后端原始文件接口 */
 export function convertFileSrc(filePath: string): string {
   if (isTauri()) {

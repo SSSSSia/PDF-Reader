@@ -10,6 +10,7 @@ pymupdf4llm 基于 PyMuPDF，输出带标题/加粗/表格结构的 Markdown，
 """
 import os
 import re
+import unicodedata
 
 import pymupdf
 import pymupdf4llm
@@ -203,6 +204,112 @@ def _demote_sentence_headings(md: str) -> str:
         return "**" + body + "**"
 
     return _HEADING_LINE.sub(repl, md)
+
+
+# ── 斜体误判上标还原（2026-09-08 用户反馈"公式还是有点问题"）──────────
+# DALK EMNLP 版实测：斜体排版的正文单词被 pymupdf4llm 的上标检测误判，
+# 输出 Unicode 上标字符——initial→ⁱⁿⁱtⁱal、node→ⁿode、new→ⁿew、
+# post-processing→post⁻processⁱⁿg、prune→pruⁿe。渲染后形如
+# "post^process^ng"，既难看又毁翻译。判据：词内嵌入上标字符必是误判
+# （真上标如 10¹² 跟在数字后、xⁿ 为单变量短 token），按词还原普通字符。
+_SUP_CHARS = "⁰¹²³⁴⁵⁶⁷⁸⁹ⁱⁿ⁻⁺⁼⁽⁾ᵃᵇᶜᵈᵉᶠᵍʰʲᵏˡᵐᵒᵖʳˢᵗᵘᵛʷˣʸᶻ"
+_SUP_WORD = re.compile(r"[A-Za-z]*[" + _SUP_CHARS + r"]+[A-Za-z" + _SUP_CHARS + r"]*")
+_SUP_ANY = re.compile("[" + _SUP_CHARS + "]")
+
+
+def _fix_italic_superscripts(md: str) -> str:
+    """把词内嵌入的 Unicode 上标字符还原为普通字符（NFKC）。
+
+    只处理「长度 ≥4、含 ≥1 个上标字符、含 ≥2 个普通字母」的词 token；
+    真上标（10¹²、xⁿ、e⁰ 等短/纯数字形态）保持原样。"""
+
+    def repl(m: re.Match) -> str:
+        w = m.group(0)
+        n_sup = sum(1 for ch in w if ch in _SUP_CHARS)
+        letters = sum(1 for ch in w if ch.isascii() and ch.isalpha())
+        if len(w) < 4 or n_sup < 1 or letters < 2:
+            return w
+        fixed = _SUP_ANY.sub(
+            lambda c: unicodedata.normalize("NFKC", c.group(0)), w
+        )
+        # NFKC 把 ⁻ 映射为数学减号 −，统一回 ASCII 连字符
+        return fixed.replace("\u2212", "-")
+
+    return _SUP_WORD.sub(repl, md)
+
+
+# ── 跨栏粘连段拆分（2026-09-08 用户反馈"摘要混在上一行"）──────────────
+# ACL/EMNLP 双栏版首页实测：作者单位区跨栏排版，pymupdf4llm 按 y 带分组
+# 会把「左栏单位行 + 行中孤立节标题（**Abstract**）+ 右栏片段」合并成
+# 单段，且吸进的右栏片段在页面其它位置还有完整段落（内容重复）。
+# 修复：① 段中孤立已知节标题 → 拆成独立标题段（##）；② 段尾片段若在
+# 其它段中完整出现（归一化 ≥45 字符）→ 截除（内容已在别处，无损失）。
+_KNOWN_SECTIONS = (
+    "Abstract", "Introduction", "Related Work", "Background", "Motivation",
+    "Methods", "Methodology", "Approach", "Results", "Experiments",
+    "Evaluation", "Discussion", "Analysis", "Conclusion", "Conclusions",
+    "Limitations", "Acknowledgments", "Acknowledgements", "References",
+    "Appendix", "Preliminaries",
+)
+_INLINE_HEADING = re.compile(
+    r"^(.{40,}?)\s+(\*\*(?:" + "|".join(_KNOWN_SECTIONS) + r")\*\*)\s+(\S.*)$",
+    re.S,
+)
+_MD_NORM_S = re.compile(r"[*_`#\s]+")
+_LEADING_NUM = re.compile(r"^\d+\s*[.、)．]")
+_MIN_TAIL_PLAIN = 30   # 段尾重复片段的最小归一化长度（实测案例 34/41 字符）
+_MIN_TAIL_WORDS = 5
+_MAX_TAIL_WORDS = 60
+_MIN_FRAG_PLAIN = 30   # 独立碎片段（其它段前缀）的最小归一化长度
+
+
+def _md_plain(s: str) -> str:
+    return _MD_NORM_S.sub("", s).lower()
+
+
+def _split_glued_columns(md: str) -> str:
+    paras = md.split("\n\n")
+    plains = [_md_plain(p) for p in paras]
+    result: list[str] = []
+    for i, para in enumerate(paras):
+        others = "\n".join(plains[:i] + plains[i + 1:])
+        # 1) 行中孤立节标题拆分（标题前 ≥40 字符视为粘连前文）；
+        #    拆出的标题升级为 ## 与正常提取产物一致
+        m = _INLINE_HEADING.match(para)
+        segs = (
+            [m.group(1).rstrip(), "## " + m.group(2), m.group(3)]
+            if m
+            else [para]
+        )
+        for seg in segs:
+            # 2) 段尾跨栏重复片段截除：尾部窗口（词数从多到少）归一化后
+            #    在其它段落中完整出现 → 该片段是吸进来的右栏内容，
+            #    截除（内容已在别处，无损失）；截除后前文过短则整段丢弃
+            words = seg.split()
+            if len(words) > _MIN_TAIL_WORDS:
+                for w in range(min(len(words) - 1, _MAX_TAIL_WORDS),
+                               _MIN_TAIL_WORDS - 1, -1):
+                    tail_plain = _md_plain(" ".join(words[-w:]))
+                    if len(tail_plain) < _MIN_TAIL_PLAIN:
+                        continue
+                    if tail_plain in others:
+                        kept = " ".join(words[:-w]).rstrip()
+                        seg = kept if len(_md_plain(kept)) >= 20 else ""
+                        break
+            plain = _md_plain(seg)
+            if not plain:
+                continue
+            # 3) 独立碎片段去重：剥掉列表标记后是其它段落的更长前缀
+            #    （y 带交错截出的残缺重复块，EMNLP 版 DALK p4 实测）
+            frag = _LEADING_NUM.sub("", plain)
+            if len(frag) >= _MIN_FRAG_PLAIN:
+                for j, pl in enumerate(plains):
+                    if j != i and pl.startswith(frag) and len(pl) > len(frag) + 10:
+                        plain = ""
+                        break
+            if plain and plain not in [_md_plain(x) for x in result[-3:]]:
+                result.append(seg)
+    return "\n\n".join(result)
 
 
 def _merge_rects(rects: list, gap: float = 0.0) -> list:
@@ -664,8 +771,12 @@ def extract_pages(
             md = (c.get("text") or "").strip()
             if md:
                 md = _clean_html(md)
+                # 斜体误判上标还原（DALK 实测 ⁱⁿⁱtⁱal/ⁿode/post⁻processⁱⁿg）
+                md = _fix_italic_superscripts(md)
                 # 伪标题降级：大字号强调句被误判成标题会巨字渲染+翻译劣化
                 md = _demote_sentence_headings(md)
+                # 跨栏粘连段拆分：单位行+行中 Abstract 标题+右栏片段合成一段
+                md = _split_glued_columns(md)
                 if image_dir:
                     md = _normalize_image_refs(md, image_dir)
                     # 先锚定插图（此时 markdown 仍是页面 y 带顺序），再列重排。

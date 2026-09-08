@@ -84,3 +84,53 @@ def test_chinese_question_heading_demoted():
     src = "# \u201c\u56fe\u589e\u5f3a\u771f\u7684\u80fd\u8d85\u8d8a\u7b80\u5355\u68c0\u7d22\u5417\uff1f\u201d"
     out = _demote_sentence_headings(src)
     assert out.startswith("**") and not out.startswith("#")
+
+
+# ── 斜体误判上标还原 + 跨栏粘连段拆分（2026-09-08）──────────────────────
+
+from ocr.textlayer import _fix_italic_superscripts, _split_glued_columns
+
+
+def test_italic_superscript_words_restored():
+    """DALK EMNLP 版实测形态：斜体单词被误判成 Unicode 上标。"""
+    assert "initial node" in _fix_italic_superscripts("the \u2071\u207f\u2071t\u2071al \u207fode")
+    assert "post-processing" in _fix_italic_superscripts("post\u207bprocess\u2071\u207fg")
+    assert "prune" in _fix_italic_superscripts("pru\u207fe")
+
+
+def test_true_superscripts_kept():
+    """真上标（数字后上标、单变量）不还原。"""
+    assert _fix_italic_superscripts("10\u00b9\u00b2") == "10\u00b9\u00b2"
+    assert _fix_italic_superscripts("x\u207f") == "x\u207f"
+    assert _fix_italic_superscripts("e\u2070") == "e\u2070"
+
+
+def test_inline_abstract_heading_split():
+    """DALK EMNLP 首页实测：单位行+行中 Abstract 标题+右栏片段粘连。"""
+    md = (
+        "5School of Information, The University of Texas at Austin, Austin "
+        "**Abstract** As large language models (LLMs) (Brown et al., 2020)\n\n"
+        "As large language models (LLMs) (Brown et al., 2020) with chain-of-thought prompting"
+    )
+    out = _split_glued_columns(md)
+    paras = out.split("\n\n")
+    assert paras[0] == "5School of Information, The University of Texas at Austin, Austin"
+    assert paras[1] == "## **Abstract**"
+
+
+def test_fragment_paragraph_dropped():
+    """DALK p4 实测：列表标记开头的残缺碎片（其它段的更长前缀）被丢弃。"""
+    full = (
+        "After obtaining the two sub-graphs we perform post-processing to "
+        "further prune redundant information in sub-graphs and describe them"
+    )
+    frag = "1. After obtaining the two sub-graphs"
+    out = _split_glued_columns(full + "\n\n" + frag)
+    assert frag not in out
+    assert full in out
+
+
+def test_normal_short_paragraph_kept():
+    """正常短段不受碎片去重影响。"""
+    md = "This is the full first paragraph with enough content here.\n\nShort note."
+    assert _split_glued_columns(md) == md

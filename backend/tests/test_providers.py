@@ -74,3 +74,23 @@ def test_batch_short_circuits_empty():
     cfg = {"provider": "siliconflow", "api_key": "", "api_url": "x", "model": "m"}
     out = asyncio.run(translate_batch(["", "  "], "en", "zh", cfg))
     assert out == ["", ""]
+
+
+# ── 批次分隔标记协议（2026-09-08：Qwen3-8B 整批连译、标记全丢实测）──────
+
+from translate.providers.openai_compat import (
+    PROMPT_VERSION,
+    _system_prompt,
+)
+
+
+def test_system_prompt_contains_batch_marker_protocol():
+    """批次合并翻译依赖模型回显 <<<n>>> 标记，协议必须写进提示词。"""
+    prompt = _system_prompt("en", "zh", {})
+    assert "<<<0>>>" in prompt
+    assert "分隔标记" in prompt
+    assert "不得合并段落" in prompt
+
+
+def test_prompt_version_bumped_for_batch_protocol():
+    assert PROMPT_VERSION == "pv5"

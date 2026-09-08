@@ -1,12 +1,16 @@
 # PDF 双语对照阅读器
 
-本地优先的 **PDF 双语对照阅读 / 翻译桌面软件**：上传 PDF → OCR 识别 → LLM 翻译 → **左右双语对照** 或 **译文紧跟原文**。
+本地优先的 **PDF 双语对照阅读 / 翻译桌面软件**：打开 PDF → 文本层/OCR 提取 → LLM 翻译 → **左右双语对照** / **译文紧跟原文** / **原版对照**三种模式阅读。
 
-- 左右对照：原文 / 译文双栏同步滚动
-- 紧跟模式：原文段下嵌入译文
-- 翻译结果本地缓存，避免重复调用
-- 页面缩略图导航、暗色模式、拖拽上传、导出双语 Markdown / 纯文本
-- 全部走云端 API（OCR 与翻译均使用 [SiliconFlow](https://siliconflow.cn) 免费额度），exe 不含任何模型权重
+**核心能力一览**：
+
+- 📖 **三种阅读模式**：左右双栏对照 / 译文紧跟原文 / **原版对照**（pdfjs 像素级原样渲染 + 已译块高亮 + 点击看译文浮层，公式/图表/复杂版式零损失）
+- 🧮 **公式全家桶**：提取期公式占位符保护 → KaTeX 渲染；公式密集块可按需「式」按钮 → 视觉模型转 LaTeX（块级缓存幂等）
+- 📊 **图表处理**：图表区域检测与快照嵌入；表格按需「译」按钮生成**译制图**（保留原排版，表内文字译成中文）
+- 🈯 **翻译质量工程**：术语表两遍法、批翻减半重试、回声/融合译文三层层层设防、块级手动重译、提示词版本化
+- 💾 **内容寻址缓存**：同一段文字/同一页提取/同一公式全局只算一次，重开文档秒出；版本号熔断让算法升级自动失效旧缓存
+- 🛠 桌面级体验：页面缩略图导航、暗色模式、拖拽上传、导出双语 Markdown/纯文本、中文排版修正（斜体转粗体）、链接外部浏览器打开
+- ☁️ 全部走云端 API（OCR 与翻译均用 [SiliconFlow](https://siliconflow.cn)，免费额度即可），exe 不含任何模型权重
 
 > 设计目标：**个人本地使用 + 开源可复刻**。配置一次 API Key 即可开箱阅读；他人 clone 后按本文档即可跑起来。
 
@@ -18,20 +22,27 @@
 |----|------|
 | 桌面壳 | Tauri v2（Rust） |
 | 前端 | React 18 + TypeScript 5 + Vite 5 + Tailwind CSS 3 + Zustand 4 |
+| 公式渲染 | remark-math + rehype-katex（KaTeX） |
+| 原版模式 | pdfjs-dist（canvas 逐页渲染 + 坐标 overlay） |
 | 后端 | FastAPI（Python 3.11+），以 Tauri **sidecar** 形式内嵌随 exe 分发 |
-| OCR | SiliconFlow `PaddlePaddle/PaddleOCR-VL-1.5`（图片接口） |
-| 翻译 | SiliconFlow（OpenAI 兼容 `chat/completions`），可扩展 provider 抽象 |
+| PDF 解析 | PyMuPDF + pymupdf4llm（文本层优先，扫描页混合 OCR） |
+| OCR | SiliconFlow `PaddlePaddle/PaddleOCR-VL-1.5`（文档解析 VLM，整页/公式块/表格通用） |
+| 翻译 | SiliconFlow（OpenAI 兼容 `chat/completions`），provider 抽象可扩展（deepl/google 占位待实现） |
 
 架构数据流：
 
 ```
 React 前端 (src/)
-   │  invoke (Tauri 命令)
+   │  invoke (Tauri 命令) / HTTP 双模桥接 (bridge.ts)
    ▼
-Rust 后端 (src-tauri) ── reqwest ──► FastAPI 后端 (127.0.0.1:8000)
-                                        │  HTTPS + Bearer Key
-                                        ▼
-                              SiliconFlow API（OCR / 翻译）
+Rust 壳 (src-tauri) ── reqwest ──► FastAPI 后端 (127.0.0.1:8000)
+                                    │  pipeline: 提取→切块→翻译→回填
+                                    │  ├─ 文本层提取 (PyMuPDF) + 扫描页 OCR
+                                    │  ├─ 布局分析：双栏重排/跨页合并/块级 bbox
+                                    │  └─ 缓存：OCR 层 / 译文层 / 公式层（内容寻址）
+                                    │  HTTPS + Bearer Key
+                                    ▼
+                          SiliconFlow API（OCR：PaddleOCR-VL / 翻译：LLM）
 ```
 
 ---
@@ -103,37 +114,112 @@ npm run dev
 
 ---
 
-## 配置 API Key
+## 配置
 
-应用配置位于（按优先级）：
+### 配置文件位置（按优先级）
 
 1. 环境变量 `PDF_READER_CONFIG` 指向的文件（可选，测试 / 自定义部署用）
 2. Windows：`%APPDATA%/pdf-reader/config.json`
 3. 其他：`~/.pdf-reader/config.json`
 
-配置字段（全部 `snake_case`）：
+### 配置字段（全部 `snake_case`）
 
-```json
+```jsonc
 {
   "ocr": {
     "provider": "siliconflow",
     "api_key": "<你的 SiliconFlow Key>",
     "api_url": "https://api.siliconflow.cn/v1",
-    "model": "PaddlePaddle/PaddleOCR-VL-1.5"
+    "model": "PaddlePaddle/PaddleOCR-VL-1.5",   // 文档解析 VLM：整页 OCR / 公式识别通用
+    "optional_payload": {
+      "useDocOrientationClassify": false,
+      "useDocUnwarping": false,
+      "useChartRecognition": false
+    }
   },
   "translate": {
     "provider": "siliconflow",
     "api_key": "<你的 SiliconFlow Key>",
     "api_url": "https://api.siliconflow.cn/v1",
-    "model": "Qwen/Qwen2.5-7B-Instruct",
-    "target_language": "en",
-    "source_language": "zh"
+    "model": "deepseek-ai/DeepSeek-V4-Flash",   // 任意 OpenAI 兼容对话模型
+    "target_language": "en",                     // 译文语言
+    "source_language": "zh"                      // 原文语言
   },
   "ui": { "default_mode": "bilingual", "theme": "light" }
 }
 ```
 
-> OCR 与翻译使用同一家的免费模型，填同一个 Key 即可。改完配置**无需重启**后端（配置按文件修改时间热重载）。
+> OCR 与翻译使用同一家的免费模型，填同一个 Key 即可。英文论文译中文请把方向改为 `source_language: "en"`、`target_language: "zh"`。改完配置**无需重启**后端（配置按文件修改时间热重载），也可在设置页点「测试连接」验证。
+
+### 数据与缓存目录
+
+```
+%APPDATA%/pdf-reader/
+├── config.json            # 应用配置（另有 .bak 备份）
+└── cache/
+    ├── 00/ … ff/          # 内容寻址 JSON 条目（256 个哈希分桶）
+    │                      #   - 提取层：文件哈希+页号 → 该页 blocks
+    │                      #   - 译文层：原文哈希+语言+模型+提示词版本 → 译文
+    │                      #   - 公式层：pdf哈希+页号+bbox+模型 → LaTeX
+    ├── images/<论文哈希>/  # 图表快照 PNG + 译制图（.zh.vN.png）
+    └── uploads/           # 浏览器模式上传的 PDF 副本（Tauri 模式直接读原路径不留副本）
+```
+
+缓存设计要点：
+
+- **key 只依赖内容哈希，不依赖文件路径**——文件改名/移动后缓存依然命中；
+- **译文层 key 含提示词版本**（`PROMPT_VERSION`）——提示词升级自动失效旧译文，不会误用旧策略产物；
+- **版本号熔断**：`CACHE_VERSION` / `PROMPT_VERSION` / `FORMULA_VERSION` 任一升级即整体失效对应层，是缓存"暴雷"时的止损大招；
+- 译文写入侧过滤回声/融合译文，命中侧再校验一次（历史污染条目自动重翻自愈）。
+
+---
+
+## 使用指南
+
+### 三种阅读模式（工具栏切换）
+
+| 模式 | 适合场景 | 说明 |
+|------|----------|------|
+| **左右对照** | 精读对照 | 原文/译文双栏同步滚动；译文走 KaTeX 渲染 |
+| **紧跟** | 顺读全文 | 原文段下嵌入译文，单栏沉浸阅读 |
+| **原版对照** | 公式/图表/复杂版式 | pdfjs 像素级渲染原页面，已译块蓝色高亮（支持跨页/断栏多段），点击浮层看译文；公式图表零损失 |
+
+### 按需交互
+
+- **块级重译**：悬停任意段落 →「译 / 重译」按钮，单块重新翻译（与全文同链路，结果写回同一缓存 key，重开不丢）
+- **公式识别**：悬停公式密集块 →「式」按钮，裁剪块区域送 PaddleOCR-VL 转 LaTeX，KaTeX 渲染在译文位；结果按 `(pdf哈希, 页号, bbox, 模型)` 缓存，重开文档自动回填
+- **表格译制图**：表格快照右上角「译」按钮 → 结构化重建（跨列行/原比例列宽对齐原图），表内文字译成中文，就地替换显示
+- **导出**：双语 Markdown / 纯文本（ExportBar）
+- **链接**：正文链接一律外部浏览器打开，不会顶掉阅读界面
+
+### 阅读体验细节（自动处理）
+
+- 双栏论文按**左右栏阅读序重排**，跨页/跨栏段落自动合并（连字符断词接回）
+- 页眉页脚 / 运行标题 / 版权行等家具块自动过滤，不进翻译
+- 中文**斜体自动转粗体**（中文无真斜体字形，Windows 下斜体中文会回退成楷体）
+- 译文占位符待翻译标记、进度条防溢出、渲染失败兜底提示
+
+---
+
+## 后端 API 一览
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| GET | `/api/health` | 健康检查（sidecar 就绪探测） |
+| POST | `/api/upload` | 浏览器模式上传 PDF，返回服务端路径 |
+| GET | `/api/file/raw` | 按路径返回 PDF 字节（缩略图/浏览器模式） |
+| GET | `/api/file/exists` | 文件存在性检查 |
+| POST | `/api/pipeline/run` | 启动提取+翻译流水线，返回 job_id |
+| GET | `/api/pipeline/status/{job_id}` | 轮询进度与渐进结果（前端 2.5s 轮询） |
+| POST | `/api/ocr/process` | 单独 OCR（不上翻） |
+| POST | `/api/translate/batch` | 批量文本翻译 |
+| GET / POST | `/api/config` | 读取 / 保存配置 |
+| POST | `/api/config/reload` | 强制重载配置 |
+| POST | `/api/config/test` | API 连通性测试（设置页按钮） |
+| GET | `/api/asset` | 缓存目录内图片访问（安全约束：仅 cache_dir 内） |
+| POST | `/api/figure/translate` | 表格快照按需译制图 |
+| POST | `/api/block/translate` | 单块手动翻译/重翻 |
+| POST | `/api/block/formula` | 公式块按需识别（bbox 裁剪 → LaTeX） |
 
 ---
 
@@ -160,12 +246,19 @@ powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1
 - **`link.exe` 被 Git Bash 的 `/usr/bin/link` 遮蔽**：在 **「x64 Native Tools for VS」/「Developer PowerShell」** 环境中构建，不要直接在普通 Git Bash 里 `cargo build`。
 - 本机仅安装 Windows Kits 8.1 时，`cargo check` / `tauri build` 会在链接阶段失败（**非代码问题**），换到带 10/11 SDK 的环境即可。
 
+### 排错：开发态常见问题
+
+- **改了后端代码没生效**：dev 后端是常驻 Python 进程（uvicorn 未开热重载），**必须重启该进程**；Vite HMR 只热更前端，容易造成"前端更新了后端还是旧的"错觉。
+- **缓存找不到/行为不一致**：检查是否真的在 `%APPDATA%/pdf-reader/`——从缺少 `APPDATA` 环境变量的 shell（如部分 Git Bash 会话）启动后端会退化到 `~/.pdf-reader/` 兜底路径，产生"第二棵缓存树"。可用 `PDF_READER_CONFIG` 显式指定配置文件规避。
+- **翻译日志大量"减半重试"**：小参数模型容易丢弃批量翻译的段落标记，属模型纪律问题——换更大的模型或调小批大小即可缓解，非 Bug。
+- **原版模式某页提示旋转**：旋转页（≠0°）暂不支持坐标对照，该页不渲染高亮（页面渲染不受影响）。
+
 ---
 
 ## 测试与 CI
 
 ```powershell
-# 后端测试（无网络依赖，使用 mock）
+# 后端测试（无网络依赖，使用 mock），当前 91 项
 cd backend
 pip install -r requirements-dev.txt
 pytest
@@ -175,7 +268,7 @@ npx tsc -b
 npx vite build
 ```
 
-仓库已配置 GitHub Actions：push / PR 到 `dev`、`master` 时自动运行前端 `tsc + vite build` 与后端 `pytest`。
+仓库已配置 GitHub Actions：push / PR 时自动运行前端 `tsc + vite build` 与后端 `pytest`。
 （Rust / Tauri 构建因需 Windows SDK，目前仅在本地验证，详见 CI 注释。）
 
 ---
@@ -184,22 +277,43 @@ npx vite build
 
 ```
 PDF-Reader/
-├── src/                     # React 前端
-│   ├── components/          # 页面与阅读组件（Main/Bilingual/Inline/PdfViewer/ExportBar…）
-│   ├── stores/              # Zustand 状态（config/pdf/ui）
-│   ├── hooks/              # useOcr（轮询流水线）/ useScrollSync / usePdfThumbnails
-│   ├── utils/export.ts     # 双语 Markdown / 纯文本导出
-│   └── types/index.ts       # 前后端一致的数据结构
-├── backend/                 # FastAPI 后端（内嵌 sidecar）
-│   ├── ocr/                # SiliconFlow OCR（PDF→PyMuPDF 转图→/chat/completions）
-│   ├── translate/           # provider 抽象 + 注册表（siliconflow/openai 可用，google/deepl 待实现）
-│   ├── pipeline/            # OCR→切块→翻译 流水线，并发 + 渐进回显
-│   ├── cache/              # 两层缓存（OCR 层 / 译文层）
-│   └── tests/              # pytest 单测
-├── src-tauri/               # Rust 桌面壳（sidecar 管理、Tauri 命令、导出写盘）
-├── scripts/                 # dev-start / build-backend / build-exe
-├── config/                  # config.example.json（模板，真实 config.json 已被 .gitignore 排除）
-├── docs/                    # 开发总纲（单一事实来源）、版本规划
+├── src/                        # React 前端
+│   ├── components/
+│   │   ├── MainPage.tsx        # 首页：选文件/拖拽上传 + 缩略图
+│   │   ├── BilingualPage.tsx   # 左右对照模式（含公式「式」/块级「译」按钮接线）
+│   │   ├── InlinePage.tsx      # 紧跟模式
+│   │   ├── OriginalReader.tsx  # 原版对照模式（pdfjs 渲染 + 多段 bbox overlay + 译文浮层）
+│   │   ├── ReaderToolbar.tsx   # 模式切换 / 缩放工具栏
+│   │   ├── ConfigPage.tsx      # 设置页
+│   │   ├── ExportBar.tsx       # 导出双语 Markdown / TXT
+│   │   └── common/             # MarkdownText(KaTeX/中文斜体修正) / TranslatableImage(译制图)
+│   │                           # BlockTranslateButton(块级重译) / FormulaButton(公式识别)
+│   ├── stores/                 # Zustand：config / pdf(文档与块状态) / ui(主题·阅读模式)
+│   ├── hooks/                  # useOcr(流水线轮询) / useConfig / usePdfThumbnails
+│   ├── lib/bridge.ts           # Tauri IPC ⇄ HTTP 双模桥接（浏览器模式复用全部 UI）
+│   ├── utils/export.ts         # 双语导出
+│   └── types/index.ts          # 前后端一致的数据结构（块/页/bbox/公式标记）
+├── backend/                    # FastAPI 后端（内嵌 sidecar）
+│   ├── main.py                 # 全部 HTTP 端点（见上表）
+│   ├── config.py               # 配置加载/热更新/路径解析（APPDATA 优先）
+│   ├── pipeline/
+│   │   ├── processor.py        # 主流水线：提取→切块→翻译→回填（进度/补翻/缓存编排）
+│   │   └── layout.py           # 块级 bbox 标注（多段消耗式匹配，原版模式数据基础）
+│   ├── ocr/
+│   │   ├── siliconflow.py      # 视觉 OCR 通道（整页 markdown，PaddleOCR-VL）
+│   │   ├── textlayer.py        # 文本层提取：双栏重排/跨页合并/家具过滤/列感知
+│   │   ├── figtranslate.py     # 图表区域检测/快照/表格结构化重建译制图
+│   │   └── formula.py          # 公式块按需识别（裁剪→VLM→LaTeX，块级缓存）
+│   ├── translate/
+│   │   ├── providers/openai_compat.py  # SiliconFlow/OpenAI 兼容翻译（批翻+减半重试+提示词版本）
+│   │   ├── glossary.py         # 术语表两遍法（全文翻译前抽术语注入提示词）
+│   │   └── sanitize.py         # 回声/融合译文检测、公式块判定、占位符保护、清理
+│   ├── cache/file_cache.py     # 内容寻址缓存（原子写/损坏兜底/版本熔断/统计）
+│   └── tests/                  # pytest 单测（91 项，全离线 mock）
+├── src-tauri/                  # Rust 桌面壳（sidecar 管理、Tauri 命令、导出写盘）
+├── scripts/                    # dev-start / build-backend / build-exe
+├── config/                     # config.example.json 模板（真实 config 不入库）
+├── docs/                       # 开发总纲（单一事实来源）、版本规划、阶段1~5 文档
 └── .github/workflows/ci.yml
 ```
 
@@ -207,14 +321,18 @@ PDF-Reader/
 
 ## 路线图
 
-| 版本 | 阶段 | 内容 |
-|------|------|------|
-| `v0.1.0`（已发布） | Phase 0 + 部分 Phase 1 | 主链路打通、OCR 重写、缓存、配置热更新、缩略图 |
-| `v0.2.0`（已发布） | Phase 2 | provider 抽象、暗色模式、拖拽上传、导出双语 |
-| `v0.3.0`（已完成，待打 tag） | Phase 3 | 测试 + CI、LICENSE、配置模板、README 复刻指南、构建串联 |
-| —（dev 工具） | 双模桥接 | `src/lib/bridge.ts`：纯浏览器模式手动测试，免 Rust 编译 |
+| 版本 | 对应阶段 | 内容 | 状态 |
+|------|----------|------|------|
+| `v0.1.0` | Phase 0+1 | 主链路打通、OCR 重写、缓存、配置热更新、缩略图 | ✅ 已发布 |
+| `v0.2.0` | Phase 2 | provider 抽象、暗色模式、拖拽上传、导出双语 | ✅ 已发布 |
+| `v0.3.0` | Phase 3 | 测试+CI、LICENSE、配置模板、README 复刻指南、构建串联 | ✅ 已实现 |
+| `v0.4.0` | 阶段1 | 原文不全根治：双栏阅读序重排、跨页/跨栏段落合并、渐进呈现 | ✅ 开发完成 |
+| `v0.5.0` | 阶段2 | 翻译质量工程：术语表两遍法、公式占位符保护、回声/融合治理、块级重译 | ✅ 开发完成 |
+| `v0.6.0` | 阶段3 | 排版与公式：KaTeX 渲染、表格译制图、中文排版修正 | ✅ 开发完成 |
+| `v0.7.0` | 阶段5 | 原版对照渲染：pdfjs 原样渲染 + 多段 bbox 高亮 + 译文浮层；公式按需识别 | 🔶 待人工验收 |
+| `v0.8.0` | 候选池 | 文档库/首页（持久化文档索引 + "已翻译文章"列表）、缓存模块独立化 | 📝 已立项未排期 |
 
-详细开发约束与接口契约见 [`docs/开发总纲.md`](docs/开发总纲.md)；版本 / 发版节奏见 [`docs/版本规划.md`](docs/版本规划.md)。
+> 各阶段的设计决策、实现细节与踩坑记录见 [`docs/`](docs/) 下对应阶段文档；总体约束见 [`docs/开发总纲.md`](docs/开发总纲.md)；发版节奏见 [`docs/版本规划.md`](docs/版本规划.md)。
 
 ---
 

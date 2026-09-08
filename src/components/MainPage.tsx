@@ -161,6 +161,17 @@ export default function MainPage() {
           <p className="text-sm text-red-700 dark:text-red-300">
             {String(error)}
           </p>
+          {/* 阶段6-T1：Key 平时不再打扰；仅认证类失败时才引导进入设置 */}
+          {/401|403|api[ _-]?key|认证|unauthorized|invalid[ _-]?key/i.test(
+            String(error),
+          ) && (
+            <button
+              onClick={() => navigate("/config")}
+              className="mt-2 text-sm font-medium text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+            >
+              前往设置检查 API Key →
+            </button>
+          )}
         </div>
       )}
     </div>

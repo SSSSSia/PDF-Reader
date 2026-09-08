@@ -215,7 +215,7 @@ function ApiSection({ title, value, presets, onChange, testMode, children }: Api
 }
 
 export default function ConfigPage() {
-  const { config, saveConfig, loadConfig } = useConfigStore();
+  const { config, isConfigured, saveConfig, loadConfig } = useConfigStore();
   const { pages } = usePdfStore();
   const { mode } = useUiStore();
   const navigate = useNavigate();
@@ -276,9 +276,21 @@ export default function ConfigPage() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h1 className="mb-5 text-lg font-semibold text-slate-900 dark:text-slate-100">
-        API 配置
-      </h1>
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+          API 配置
+        </h1>
+        {/* 阶段6-T1：配置保存在本地 config.json，重启无需重新填写 */}
+        {isConfigured && (
+          <span
+            role="status"
+            className="flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+          >
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+            已配置（重启无需重新填写）
+          </span>
+        )}
+      </div>
 
       <div className="space-y-5">
         <ApiSection

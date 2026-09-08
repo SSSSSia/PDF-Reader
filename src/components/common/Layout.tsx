@@ -3,14 +3,18 @@ import { useConfigStore } from "../../stores/configStore";
 import { useUiStore } from "../../stores/uiStore";
 
 export default function Layout({ children }: { children: React.ReactNode }) {
-  const { isConfigured } = useConfigStore();
+  const { config, isConfigured, configLoaded, setTheme: saveTheme } =
+    useConfigStore();
   const { theme, toggleTheme, setTheme } = useUiStore();
   const location = useLocation();
 
   const handleToggle = async () => {
     const next = theme === "dark" ? "light" : "dark";
     toggleTheme();
-    await setTheme(next);
+    setTheme(next);
+    // 阶段6-T1：主题持久化走配置单一来源（落盘 config.json 的 ui.theme），
+    // 下次启动由 App 启动灌入自动恢复。
+    await saveTheme(next);
   };
 
   return (
@@ -48,7 +52,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             >
               设置
             </Link>
-            {!isConfigured && (
+            {/* 阶段6-T1：只在「已加载且确无 Key」时提示，避免启动加载瞬间误报 */}
+            {configLoaded && config && !isConfigured && (
               <span className="ml-2 hidden items-center gap-1.5 rounded-md bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 sm:flex">
                 <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
                 请先配置 API Key

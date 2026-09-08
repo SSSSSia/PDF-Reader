@@ -21,6 +21,7 @@ export default function FormulaButton({ block }: { block: TextBlock }) {
   const [state, setState] = useState<"idle" | "busy" | "translating" | "err">(
     "idle",
   );
+  const [errMsg, setErrMsg] = useState<string | null>(null);
   const filePath = usePdfStore((s) => s.filePath);
   const isLoading = usePdfStore((s) => s.isLoading);
   const updateBlockTranslated = usePdfStore((s) => s.updateBlockTranslated);
@@ -43,6 +44,7 @@ export default function FormulaButton({ block }: { block: TextBlock }) {
   const onClick = async () => {
     if (!filePath || segs.length === 0) return;
     setState("busy");
+    setErrMsg(null);
     try {
       const parts: string[] = [];
       for (const seg of segs) {
@@ -77,6 +79,7 @@ export default function FormulaButton({ block }: { block: TextBlock }) {
       }
     } catch (e) {
       console.error("公式识别失败:", e);
+      setErrMsg(e instanceof Error ? e.message : String(e));
       setState("err");
     }
   };
@@ -87,12 +90,14 @@ export default function FormulaButton({ block }: { block: TextBlock }) {
       : state === "translating"
         ? "翻译中…"
         : state === "err"
-          ? "重试"
+          ? "失败·重试"
           : "式";
   const disabled = isLoading || state === "busy" || state === "translating" || !filePath || segs.length === 0;
   const title = segs.length === 0
     ? "该块未匹配到坐标，无法裁剪识别"
-    : "识别此块公式为 LaTeX（含正文时自动重译）";
+    : state === "err" && errMsg
+      ? `上次失败：${errMsg}（点按重试；若提示 404 请重启后端进程）`
+      : "识别此块公式为 LaTeX（含正文时自动重译）";
 
   return (
     <button

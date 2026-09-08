@@ -339,12 +339,9 @@ function BlockCard({
           译文
         </span>
         <div className="flex items-center gap-1.5">
-          {/* 公式块出「式」（混合块式+译并存，2026-09-08），其余「译/重译」 */}
+          {/* 公式块只出「式」（识别成功自动重译，2026-09-08），其余「译/重译」 */}
           {block.formula_hint ? (
-            <>
-              <FormulaButton block={block} />
-              {block.math_mixed && <BlockTranslateButton block={block} />}
-            </>
+            <FormulaButton block={block} />
           ) : (
             <BlockTranslateButton block={block} />
           )}

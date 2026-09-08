@@ -115,15 +115,12 @@ export default function BilingualPage() {
               >
                 <div className="paper-font group relative py-3 pr-2 text-justify text-slate-900 dark:text-slate-100">
                   {/* 悬停浮现的单块翻译/重翻按钮（2026-09-07 用户需求）；
-                      纯公式块出「式」（按需 OCR 识别 LaTeX）；
-                      数学密集混合块「式+译」并存——「式」识别替换原文后自动
-                      重译，「译」保留普通翻译路径（2026-09-08） */}
+                      公式块（含纯公式/混合）只出「式」——识别成功后纯公式
+                      直出 LaTeX，混合块替换原文并自动重译（管线翻译完成后
+                      也会自动跑一遍，按钮作手动重试入口，2026-09-08） */}
                   <span className="absolute right-1 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                     {b.formula_hint ? (
-                      <>
-                        <FormulaButton block={b} />
-                        {b.math_mixed && <BlockTranslateButton block={b} />}
-                      </>
+                      <FormulaButton block={b} />
                     ) : (
                       <BlockTranslateButton block={b} />
                     )}

@@ -652,6 +652,81 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                 elif isinstance(out, Exception):
                     print(f"[figure] 译制图任务失败（回退原图）: {out}")
 
+        # 公式自动后处理（用户建议的"二次翻译"，2026-09-08）：文本翻译完成后
+        # 对 formula_hint 块自动跑视觉识别——纯公式块结果直接进译文位；数学
+        # 密集混合块识别结果（英文正文+$..$）替换原文并自动单块重译。识别按
+        # 内容寻址缓存幂等（重跑零成本）；失败块保留现状，可手动「式」重试。
+        fx_targets = [
+            (page, block)
+            for page in pages
+            for block in page["blocks"]
+            if block.get("formula_hint")
+            and (block.get("bboxes") or block.get("bbox"))
+        ]
+        if fx_targets:
+            print(f"[formula] 公式后处理：{len(fx_targets)} 个公式块")
+            from ocr.formula import recognize_block_formula
+
+            fx_sem = asyncio.Semaphore(2)
+
+            async def _fx_one(page: dict, block: dict) -> None:
+                async with fx_sem:
+                    segs = block.get("bboxes") or [
+                        {"page": page["page"], "bbox": block["bbox"]}
+                    ]
+                    parts: list[str] = []
+                    for seg in segs:
+                        try:
+                            r = await recognize_block_formula(
+                                file_path,
+                                pdf_hash,
+                                seg["page"],
+                                seg["bbox"],
+                                settings.ocr_config,
+                                settings.cache_dir,
+                            )
+                            parts.append(r["latex"].strip())
+                        except Exception as e:
+                            print(f"[formula] 段识别失败（块保留原状）: {e}")
+                            return
+                    md = "\n\n".join(p for p in parts if p)
+                    if not md:
+                        return
+                    # 混合块判定与前端同阈值：识别结果含足量正文 → 重译
+                    words = len(re.findall(r"[A-Za-z]{2,}", md))
+                    if words < 10:
+                        block["translated"] = md
+                        return
+                    block["original"] = md
+                    protected_md, restore_md = sanitize.protect_formulas(md)
+                    try:
+                        translated = await translate_text(
+                            protected_md, source_lang, target_lang, t_cfg
+                        )
+                        block["translated"] = sanitize.strip_stray_emphasis(
+                            restore_md(
+                                sanitize.strip_prompt_echo(
+                                    translated or "", t_cfg.get("doc_title")
+                                )
+                            )
+                        )
+                        if not sanitize.is_echo(
+                            md, block["translated"], target_lang
+                        ):
+                            write_cache(
+                                settings.cache_dir,
+                                translate_key(
+                                    text_hash(md), target_lang, model, PROMPT_VERSION
+                                ),
+                                {"translated": block["translated"]},
+                            )
+                    except Exception as e:
+                        print(f"[formula] 混合块重译失败（识别结果保留）: {e}")
+
+            await asyncio.gather(
+                *[_fx_one(p, b) for p, b in fx_targets], return_exceptions=True
+            )
+
         job["pages"] = pages
         job["status"] = "done"
         job["progress"] = 100

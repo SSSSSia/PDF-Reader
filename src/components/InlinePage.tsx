@@ -94,14 +94,11 @@ export default function InlinePage() {
               ) : (
                 <>
                   <div className="text-slate-900 dark:text-slate-100 paper-font text-justify group relative">
-                    {/* 悬停浮现的单块按钮（2026-09-07）：公式块「式」（混合块
-                        式+译并存，2026-09-08），其余「译/重译」 */}
+                    {/* 悬停浮现的单块按钮（2026-09-07）：公式块只出「式」
+                        （识别成功自动重译，2026-09-08），其余「译/重译」 */}
                     <span className="absolute right-0 top-0 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                       {b.formula_hint ? (
-                        <>
-                          <FormulaButton block={b} />
-                          {b.math_mixed && <BlockTranslateButton block={b} />}
-                        </>
+                        <FormulaButton block={b} />
                       ) : (
                         <BlockTranslateButton block={b} />
                       )}

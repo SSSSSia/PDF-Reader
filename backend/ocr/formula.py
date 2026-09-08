@@ -12,23 +12,48 @@ temperature 0.01），裁剪坐标来自 pipeline.layout 的多段 bbox。识别
 
 import asyncio
 import hashlib
+import re
 
 import pymupdf
 
 from cache.file_cache import read_cache, write_cache
 
-# v1: 首版（PaddleOCR-VL-1.5，2.5x 渲裁剪，公式提示词）
-FORMULA_VERSION = "v1"
+# v2: 强化提示词（下标质量更好，实测 \mu_k vs \mu k）+ 裸 LaTeX 包裹后处理
+# （PaddleOCR-VL 实测从不输出 $ 定界符，结果需包裹后 KaTeX 才能渲染）
+FORMULA_VERSION = "v2"
 
 FORMULA_PROMPT = (
-    "Transcribe all mathematical formulas in this image into LaTeX. "
-    "Use $$...$$ on its own line for display formulas and $...$ for inline math. "
-    "Keep any non-formula text as plain text, preserving reading order. "
-    "Output the transcription only, no explanations."
+    "You are a math OCR engine. Transcribe EVERY mathematical expression in this "
+    "image as LaTeX source code. Wrap inline math in $...$ and display math in "
+    "$$...$$. Example: a Gaussian N(x; mu_k, Sigma_k) must become "
+    "$\\mathcal{N}(x;\\mu_k,\\Sigma_k)$. Never write math as plain text. "
+    "Non-math words stay as plain text. Output markdown only."
 )
 
 # 渲染倍率：与全文 OCR 的 RENDER_SCALE 同级，保证小字号上下标可辨认
 _RENDER_SCALE = 2.5
+
+# 裸 LaTeX 片段：\宏（含可选的 _下标 / ^上标）。裸脚本体不含逗号（否则
+# "N(x; \mu_k, \Sigma_k)" 的 \mu_k, 会把分隔逗号卷进公式），逗号只在
+# 花括号体内合法（\mu_{k,n} 多下标形态）
+_BARE_LATEX = re.compile(
+    r"\\[a-zA-Z]+"
+    r"(?:_(?:\{[A-Za-z0-9,+\-]{1,12}\}|[A-Za-z0-9+\-]))?"
+    r"(?:\^(?:\{[A-Za-z0-9,+\-]{1,12}\}|[A-Za-z0-9+\-]))?"
+)
+
+
+def wrap_bare_latex(text: str) -> str:
+    """识别结果无任何 $ 定界时，把裸 LaTeX 宏片段包进 $...$。
+
+    实测（2026-09-08）：PaddleOCR-VL 即便按提示词要求也**从不输出 $ 定界**，
+    返回形如 "N(x; \\mu_k, \\Sigma_k)"——不包裹则 KaTeX 无法渲染，宏原样
+    露在正文里。只处理无 $ 的结果（有定界说明模型这次听话了，不动）；
+    普通单词不含 \\ 不会误包，残渣片段（\\x）包了也只影响残渣本身。
+    """
+    if not text or "$" in text:
+        return text
+    return _BARE_LATEX.sub(lambda m: f"${m.group(0)}$", text)
 
 
 def _valid_latex(text: str) -> bool:
@@ -113,5 +138,6 @@ async def recognize_block_formula(
     ).strip()
     if not _valid_latex(text):
         raise RuntimeError("识别结果为空或不含数学记号")
+    text = wrap_bare_latex(text)
     write_cache(cache_dir, key, {"latex": text})
     return {"latex": text, "cached": False}

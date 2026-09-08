@@ -67,3 +67,24 @@ export interface OCRJob {
   job_id: string;
   state: "pending" | "running" | "done" | "failed";
 }
+
+/** 文档索引记录（阶段6-T2/T3）：GET /api/docs 返回，主页"已翻译文章"列表用 */
+export interface DocMeta {
+  doc_id: string;
+  title: string;
+  file_path: string;
+  pdf_hash: string;
+  page_count: number;
+  translated_at: string;
+  status: string;
+  /** 后端实时探测：源 PDF 是否仍在原路径（缺失时原版模式禁用） */
+  file_exists?: boolean;
+}
+
+/** POST /api/docs/open 返回：缓存重建的已翻译会话 */
+export interface OpenDocResult {
+  pages: PageResult[];
+  file_exists: boolean;
+  doc_title: string;
+  doc: DocMeta;
+}

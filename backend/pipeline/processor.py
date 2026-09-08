@@ -756,7 +756,7 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
             import docs_index
 
             docs_index.upsert_doc(
-                os.path.dirname(settings.config_path),
+                settings.data_dir,
                 {
                     "doc_id": pdf_hash[:16],
                     "title": doc_title

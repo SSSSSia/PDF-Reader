@@ -151,11 +151,15 @@ npm run dev
 
 > OCR 与翻译使用同一家的免费模型，填同一个 Key 即可。英文论文译中文请把方向改为 `source_language: "en"`、`target_language: "zh"`。改完配置**无需重启**后端（配置按文件修改时间热重载），也可在设置页点「测试连接」验证。
 
-### 数据与缓存目录
+### 数据与缓存目录（阶段6-T4 统一声明）
+
+所有持久化数据收敛在**同一个用户数据目录**：`config.json` 所在目录即数据根，
+后端启动日志会打印实际生效目录（`数据目录: ...`）。
 
 ```
-%APPDATA%/pdf-reader/
+%APPDATA%/pdf-reader/            # Windows（无 APPDATA 环境时退回 ~/.pdf-reader/）
 ├── config.json            # 应用配置（另有 .bak 备份）
+├── docs_index.json        # 文档索引：主页"已翻译文章"列表（doc_id/标题/路径/页数/时间）
 └── cache/
     ├── 00/ … ff/          # 内容寻址 JSON 条目（256 个哈希分桶）
     │                      #   - 提取层：文件哈希+页号 → 该页 blocks

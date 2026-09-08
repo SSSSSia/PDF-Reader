@@ -32,8 +32,15 @@ logger = logging.getLogger("pdf-reader")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await settings.init()
+    # 阶段6-T4：启动即打印实际生效的数据目录，兜底轨激活时显式告警
+    logger.info("数据目录: %s（config.json / cache/ / docs_index.json 统一在此）", settings.data_dir)
     logger.info("配置文件: %s", settings.config_path)
     logger.info("缓存目录: %s", settings.cache_dir)
+    if settings.using_fallback_dir():
+        logger.warning(
+            "未检测到 APPDATA 环境变量，已退回 ~/.pdf-reader 兜底目录"
+            "（Windows 打包版不应出现；可用 PDF_READER_CONFIG 显式指定）"
+        )
     yield
 
 app = FastAPI(title="PDF Bilingual Reader API", lifespan=lifespan)
@@ -310,7 +317,7 @@ async def api_get_config():
 @app.post("/api/config")
 async def api_set_config(payload: dict):
     """写入配置（与 Rust save_config 行为一致）。dev 模式前端保存配置时调用。"""
-    parent = os.path.dirname(settings.config_path)
+    parent = settings.data_dir
     os.makedirs(parent, exist_ok=True)
     with open(settings.config_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -323,8 +330,7 @@ async def api_list_docs():
     """主页"已翻译文章"列表（阶段6-T3）。file_exists 供前端标记源文件缺失。"""
     import docs_index
 
-    data_dir = os.path.dirname(settings.config_path)
-    docs = docs_index.load_index(data_dir)
+    docs = docs_index.load_index(settings.data_dir)
     for d in docs:
         d["file_exists"] = bool(d.get("file_path")) and os.path.isfile(d["file_path"])
     return {"docs": docs}
@@ -342,11 +348,7 @@ async def api_open_doc(payload: dict):
     from pipeline import processor
 
     doc_id = str(payload.get("doc_id") or "").strip()
-    doc = (
-        docs_index.get_doc(os.path.dirname(settings.config_path), doc_id)
-        if doc_id
-        else None
-    )
+    doc = docs_index.get_doc(settings.data_dir, doc_id) if doc_id else None
     if not doc:
         raise HTTPException(status_code=404, detail="文档索引中不存在该记录")
     try:

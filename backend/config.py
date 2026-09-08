@@ -12,6 +12,10 @@ class Settings:
       无需重启后端即可生效（改完 API Key/模型后保存即可）。
     - 路径与 Rust 端保持一致：Windows -> %APPDATA%/pdf-reader/config.json，
       其他平台 -> ~/.pdf-reader/config.json。
+
+    阶段6-T4（持久化路径统一）：config.json / cache/ / docs_index.json /
+    cache/images/ 全部收敛在 data_dir（config.json 所在目录）之下；
+    ~/.pdf-reader/ 仅作无 APPDATA 环境时的兜底轨，启动日志会打印实际生效目录。
     """
 
     def __init__(self):
@@ -20,6 +24,17 @@ class Settings:
         self._mtime = -1
         self.ocr_config: dict = {}
         self.translate_config: dict = {}
+
+    @property
+    def data_dir(self) -> str:
+        """用户数据目录 = config.json 所在目录（所有持久化数据的统一根）。"""
+        return os.path.dirname(self.config_path)
+
+    def using_fallback_dir(self) -> bool:
+        """是否处于 ~/.pdf-reader 兜底轨（Windows 缺 APPDATA 时；打包版不应出现）。"""
+        if os.environ.get("PDF_READER_CONFIG"):
+            return False  # 显式指定配置文件不算兜底
+        return not (platform.system() == "Windows" and os.environ.get("APPDATA"))
 
     async def init(self):
         self.config_path = self._resolve_config_path()

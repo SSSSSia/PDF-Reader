@@ -24,3 +24,29 @@ def test_hot_reload_via_mtime(tmp_path, monkeypatch):
     changed = settings.refresh()
     assert changed is True
     assert settings.ocr_config["api_key"] == "c"
+
+
+def test_data_dir_and_fallback_flag(tmp_path, monkeypatch):
+    """阶段6-T4：data_dir = config.json 所在目录；显式 PDF_READER_CONFIG 不算兜底轨。"""
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("PDF_READER_CONFIG", str(cfg_file))
+    settings.config_path = ""
+    asyncio.run(settings.init())
+    assert settings.data_dir == str(tmp_path)
+    assert settings.using_fallback_dir() is False  # 显式指定不算兜底
+    assert settings.cache_dir == str(tmp_path / "cache")
+    assert (tmp_path / "cache").is_dir()  # init 已建缓存目录
+
+
+def test_data_dir_and_fallback_flag(tmp_path, monkeypatch):
+    """阶段6-T4：data_dir = config.json 所在目录；显式 PDF_READER_CONFIG 不算兜底轨。"""
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("PDF_READER_CONFIG", str(cfg_file))
+    settings.config_path = ""
+    asyncio.run(settings.init())
+    assert settings.data_dir == str(tmp_path)
+    assert settings.using_fallback_dir() is False  # 显式指定不算兜底
+    assert settings.cache_dir == str(tmp_path / "cache")
+    assert (tmp_path / "cache").is_dir()  # init 已建缓存目录

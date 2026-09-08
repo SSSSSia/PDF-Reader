@@ -34,3 +34,6 @@ docs/spike-s2/pdf.min.mjs
 docs/spike-s2/pdf.worker.min.mjs
 docs/spike-s2/sample.pdf
 vite.config.ts.timestamp-*
+
+# 后端开发日志（dev-start.ps1 重定向输出）
+logs/

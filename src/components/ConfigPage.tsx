@@ -215,13 +215,13 @@ function ApiSection({ title, value, presets, onChange, testMode, children }: Api
 }
 
 export default function ConfigPage() {
-  const { config, isConfigured, saveConfig, loadConfig } = useConfigStore();
+  const { config, saveConfig, loadConfig } = useConfigStore();
   const { pages } = usePdfStore();
   const { mode } = useUiStore();
   const navigate = useNavigate();
   const [form, setForm] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [saved, setSaved] = useState<null | { ok: boolean; msg: string }>(null);
   const [error, setError] = useState<string | null>(null);
 
   // 返回目标：已有解析结果 → 回阅读页（跟随当前阅读模式）；否则回主页
@@ -262,35 +262,50 @@ export default function ConfigPage() {
     }
     setSaving(true);
     setError(null);
+    setSaved(null);
     try {
       await saveConfig(form);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       console.error("Save failed:", e);
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
       setSaving(false);
+      return;
     }
+    // 保存后立即实测两个服务的连通性（2026-09-08 用户决策：取消"已配置"
+    // 徽标，连通性只在保存时验证）。保存不受测试结果影响（本地 Ollama
+    // 离线也允许保存），失败仅提示具体原因。
+    const failures: string[] = [];
+    await Promise.all([
+      testApiConnection({
+        api_url: form.ocr.api_url,
+        api_key: form.ocr.api_key,
+        model: form.ocr.model,
+        mode: "ocr",
+      }).catch((e: unknown) => {
+        failures.push(`OCR 服务连接失败：${e instanceof Error ? e.message : String(e)}`);
+      }),
+      testApiConnection({
+        api_url: form.translate.api_url,
+        api_key: form.translate.api_key,
+        model: form.translate.model,
+        mode: "text",
+      }).catch((e: unknown) => {
+        failures.push(`翻译服务连接失败：${e instanceof Error ? e.message : String(e)}`);
+      }),
+    ]);
+    setSaved(
+      failures.length === 0
+        ? { ok: true, msg: "已保存，两个服务均连接正常" }
+        : { ok: false, msg: `已保存，但 ${failures.join("；")}` },
+    );
+    setSaving(false);
   };
 
   return (
     <div className="mx-auto max-w-2xl">
-      <div className="mb-5 flex items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-          API 配置
-        </h1>
-        {/* 阶段6-T1：配置保存在本地 config.json，重启无需重新填写 */}
-        {isConfigured && (
-          <span
-            role="status"
-            className="flex items-center gap-1.5 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
-            已配置（重启无需重新填写）
-          </span>
-        )}
-      </div>
+      <h1 className="mb-5 text-lg font-semibold text-slate-900 dark:text-slate-100">
+        API 配置
+      </h1>
 
       <div className="space-y-5">
         <ApiSection
@@ -366,10 +381,16 @@ export default function ConfigPage() {
           </button>
           {saved && (
             <span
-              role="status"
-              className="animate-fade-in text-sm font-medium text-emerald-600 dark:text-emerald-400"
+              role={saved.ok ? "status" : "alert"}
+              title={saved.msg}
+              className={`animate-fade-in min-w-0 max-w-md truncate text-sm font-medium ${
+                saved.ok
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-amber-600 dark:text-amber-400"
+              }`}
             >
-              ✓ 已保存
+              {saved.ok ? "✓ " : "⚠ "}
+              {saved.msg}
             </span>
           )}
           {error && (

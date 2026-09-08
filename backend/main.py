@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import asyncio
 import base64
+import logging
 import struct
 import zlib
 import uvicorn
@@ -19,9 +20,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipeline.processor import run_pipeline, get_pipeline_status
 from config import settings
 
+# uvicorn 的默认 logger 不覆盖端点内 except 的异常细节；
+# 统一经 root logger 输出（dev 由 dev-start.ps1 重定向到 logs/backend-dev.log），
+# 端点失败原因不再只存在于 HTTP 响应里（2026-09-08 用户反馈"后端没有日志"）。
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("pdf-reader")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await settings.init()
+    logger.info("配置文件: %s", settings.config_path)
+    logger.info("缓存目录: %s", settings.cache_dir)
     yield
 
 app = FastAPI(title="PDF Bilingual Reader API", lifespan=lifespan)
@@ -128,6 +140,10 @@ async def api_block_formula(payload: dict):
             file_path, pdf_hash, page, bbox, settings.ocr_config, settings.cache_dir
         )
     except Exception as e:
+        # 异常细节落日志（Hidden 启动时经重定向可查），HTTP 响应只带摘要
+        logger.exception(
+            "块级公式识别失败 file=%s page=%s bbox=%s", file_path, page, bbox
+        )
         raise HTTPException(status_code=502, detail=f"公式识别失败: {e}")
 
 
@@ -164,6 +180,7 @@ async def api_block_translate(payload: dict):
             protected, source_lang, target_lang, t_cfg
         )
     except Exception as e:
+        logger.exception("单块翻译失败 lang=%s→%s len=%d", source_lang, target_lang, len(original))
         raise HTTPException(status_code=502, detail=f"翻译失败: {e}")
     out = sanitize.strip_stray_emphasis(
         restore(sanitize.strip_prompt_echo(translated or ""))

@@ -100,18 +100,30 @@ export default function FormulaButton({ block }: { block: TextBlock }) {
       : "识别此块公式为 LaTeX（含正文时自动重译）";
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      className={`rounded border px-1.5 py-0.5 text-xs shadow-sm transition-colors ${
-        state === "err"
-          ? "border-red-300 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-300"
-          : "border-slate-200 bg-white text-slate-500 hover:border-violet-400 hover:text-violet-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-violet-500 dark:hover:text-violet-300"
-      } disabled:cursor-not-allowed disabled:opacity-60`}
-    >
-      {label}
-    </button>
+    <span className="inline-flex max-w-full items-center gap-1.5 align-middle">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        title={title}
+        className={`shrink-0 rounded border px-1.5 py-0.5 text-xs shadow-sm transition-colors ${
+          state === "err"
+            ? "border-red-300 bg-red-50 text-red-600 hover:bg-red-100 dark:border-red-800/60 dark:bg-red-900/30 dark:text-red-300"
+            : "border-slate-200 bg-white text-slate-500 hover:border-violet-400 hover:text-violet-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-violet-500 dark:hover:text-violet-300"
+        } disabled:cursor-not-allowed disabled:opacity-60`}
+      >
+        {label}
+      </button>
+      {/* 失败原因内联展示（2026-09-08 用户反馈：报错但看不到原因） */}
+      {state === "err" && errMsg && (
+        <span
+          role="alert"
+          className="min-w-0 flex-1 truncate text-xs text-red-600 dark:text-red-400"
+          title={errMsg}
+        >
+          {errMsg}
+        </span>
+      )}
+    </span>
   );
 }

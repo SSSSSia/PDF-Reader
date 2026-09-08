@@ -4,6 +4,7 @@ import { useUiStore } from "../stores/uiStore";
 import MarkdownText from "./common/MarkdownText";
 import TranslatableImage from "./common/TranslatableImage";
 import BlockTranslateButton from "./common/BlockTranslateButton";
+import FormulaButton from "./common/FormulaButton";
 import ReaderToolbar from "./ReaderToolbar";
 import OriginalReader from "./OriginalReader";
 
@@ -113,9 +114,14 @@ export default function BilingualPage() {
                 style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" }}
               >
                 <div className="paper-font group relative py-3 pr-2 text-justify text-slate-900 dark:text-slate-100">
-                  {/* 悬停浮现的单块翻译/重翻按钮（2026-09-07 用户需求） */}
-                  <span className="absolute right-1 top-2 z-10 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                    <BlockTranslateButton block={b} />
+                  {/* 悬停浮现的单块翻译/重翻按钮（2026-09-07 用户需求）；
+                      公式密集块换成「式」按钮（按需 OCR 识别 LaTeX，2026-09-08） */}
+                  <span className="absolute right-1 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    {b.formula_hint ? (
+                      <FormulaButton block={b} />
+                    ) : (
+                      <BlockTranslateButton block={b} />
+                    )}
                   </span>
                   <MarkdownText text={b.original} />
                 </div>

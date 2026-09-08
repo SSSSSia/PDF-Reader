@@ -82,6 +82,24 @@ export async function translateBlock(
   return data.translated;
 }
 
+/**
+ * 块级公式识别（2026-09-08 用户决策：按需「式」按钮）。
+ * 传入文件路径 + 页号 + bbox（首段坐标），后端裁剪区域渲染后送视觉模型
+ * （PaddleOCR-VL）转 LaTeX，结果按 (pdf_hash,page,bbox,model) 缓存幂等。
+ */
+export async function recognizeBlockFormula(
+  filePath: string,
+  page: number,
+  bbox: [number, number, number, number],
+): Promise<{ latex: string; cached: boolean }> {
+  const data = (await apiFetch(`${API_BASE}/api/block/formula`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_path: filePath, page, bbox }),
+  })) as { latex: string; cached: boolean };
+  return data;
+}
+
 /** 启动流水线，返回与 Rust run_pipeline 一致的 JSON 字符串 */
 export async function runPipeline(filePath: string): Promise<string> {
   if (isTauri()) {

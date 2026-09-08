@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
+import asyncio
 import base64
 import struct
 import zlib
@@ -99,6 +100,35 @@ async def api_figure_translate(payload: dict):
         reason = figtranslate.last_error() or "未知原因（见后端日志）"
         raise HTTPException(status_code=500, detail=f"{reason}")
     return {"translated": f"![Table]({zh.replace(os.sep, '/')})"}
+
+
+@app.post("/api/block/formula")
+async def api_block_formula(payload: dict):
+    """块级公式识别（按需「式」按钮，2026-09-08 用户决策）。
+
+    传入 {file_path, page, bbox}：裁剪该块区域渲染 2.5x PNG → 视觉模型
+    （默认 PaddleOCR-VL-1.5，文档解析专精，公式→LaTeX 原生能力）→ 返回
+    {latex, cached}。结果按 (pdf_hash, page, bbox, model) 内容寻址缓存，
+    重复点按/重开文档幂等零成本；流水线对已缓存公式块自动回填译文位。
+    前端拿到 LaTeX 后走既有 KaTeX 管线渲染。
+    """
+    from cache.file_cache import file_hash
+    from ocr.formula import recognize_block_formula
+
+    file_path = str(payload.get("file_path") or "").strip()
+    page = payload.get("page")
+    bbox = payload.get("bbox") or []
+    if not file_path or not os.path.isfile(file_path):
+        raise HTTPException(status_code=400, detail="文件不存在")
+    if not isinstance(page, int) or page < 0 or len(bbox) != 4:
+        raise HTTPException(status_code=400, detail="参数不完整（page/bbox）")
+    pdf_hash = await asyncio.to_thread(file_hash, file_path)
+    try:
+        return await recognize_block_formula(
+            file_path, pdf_hash, page, bbox, settings.ocr_config, settings.cache_dir
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"公式识别失败: {e}")
 
 
 @app.post("/api/block/translate")

@@ -111,7 +111,13 @@ def _pdf_to_page_images(file_path: str, only_pages: list[int] | None = None) -> 
         doc.close()
 
 
-async def _ocr_image(img_bytes: bytes, api_url: str, api_key: str, model: str) -> str:
+async def _ocr_image(
+    img_bytes: bytes,
+    api_url: str,
+    api_key: str,
+    model: str,
+    prompt: str = OCR_PROMPT,
+) -> str:
     b64 = base64.b64encode(img_bytes).decode("ascii")
     data_url = f"data:image/png;base64,{b64}"
 
@@ -122,7 +128,7 @@ async def _ocr_image(img_bytes: bytes, api_url: str, api_key: str, model: str) -
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
-                    {"type": "text", "text": OCR_PROMPT},
+                    {"type": "text", "text": prompt},
                 ],
             }
         ],

@@ -450,9 +450,25 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                                 )
                             )
                     continue
-                # 公式密集块（阶段2-T5）：数学碎片翻译毫无意义，译文=原文
+                # 公式密集块（阶段2-T5）：数学碎片翻译毫无意义，译文=原文。
+                # formula_hint 标记（前端出「式」按钮按需 OCR 识别 LaTeX）；
+                # 识别过的块直接回填 LaTeX（按需结果的持久化，重开不丢，2026-09-08）
                 if sanitize.is_formula_block(original):
                     block["translated"] = original
+                    block["formula_hint"] = True
+                    bbox = block.get("bbox")
+                    if bbox:
+                        from ocr.formula import load_cached_formula
+
+                        cached_latex = load_cached_formula(
+                            pdf_hash,
+                            page["page"],
+                            bbox,
+                            settings.ocr_config,
+                            settings.cache_dir,
+                        )
+                        if cached_latex:
+                            block["translated"] = cached_latex
                     continue
                 key = translate_key(
                     text_hash(original), target_lang, model, PROMPT_VERSION

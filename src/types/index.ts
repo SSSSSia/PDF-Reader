@@ -39,6 +39,8 @@ export interface TextBlock {
   /** 多段坐标（断栏续接/跨页合并/作者行多段）：全部命中分段，page 为段所在页；
    *  缺省/空数组时回退用 bbox（挂在块所属页） */
   bboxes?: { page: number; bbox: [number, number, number, number] }[] | null;
+  /** 公式密集块（后端 is_formula_block 判定）：hover 出「式」按钮按需 OCR 识别 LaTeX */
+  formula_hint?: boolean;
 }
 
 export interface PageResult {

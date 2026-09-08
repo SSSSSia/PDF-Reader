@@ -736,6 +736,28 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         job["status"] = "done"
         job["progress"] = 100
         job["finished_at"] = time.time()
+
+        # 阶段6-T2：持久化文档索引（主页"已翻译文章"列表的数据源）。
+        # 结果此前只存内存 _jobs（TTL 淘汰），重启即失；索引写入失败
+        # 只影响主页列表，绝不阻断主链路。
+        try:
+            import docs_index
+
+            docs_index.upsert_doc(
+                os.path.dirname(settings.config_path),
+                {
+                    "doc_id": pdf_hash[:16],
+                    "title": doc_title
+                    or os.path.splitext(os.path.basename(file_path))[0],
+                    "file_path": os.path.abspath(file_path),
+                    "pdf_hash": pdf_hash,
+                    "page_count": len(pages),
+                    "file_mtime": int(os.path.getmtime(file_path)),
+                    "status": "done",
+                },
+            )
+        except Exception as e:
+            print(f"[docs_index] 索引写入失败（不阻断主链路）: {e}")
     except Exception as e:
         job["status"] = "failed"
         job["error"] = str(e)

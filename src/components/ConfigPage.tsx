@@ -77,17 +77,32 @@ function PasswordField({
   );
 }
 
+/** 测试状态（提升到 ConfigPage 持有，保存时自动补测需读取/回显）。
+ *  spec 记录测试时的表单值：用户测完又改动地址/Key/模型则视为未测试。 */
+interface SectionTest {
+  state: "idle" | "testing" | "ok" | "fail";
+  msg: string;
+  spec?: { api_url: string; api_key: string; model: string; mode: "ocr" | "text" };
+}
+
+const sameSpec = (
+  a: SectionTest["spec"],
+  b: { api_url: string; api_key: string; model: string; mode: "ocr" | "text" },
+) => !!a && a.api_url === b.api_url && a.api_key === b.api_key && a.model === b.model && a.mode === b.mode;
+
 interface ApiSectionProps {
   title: string;
   value: { provider: string; api_key: string; api_url: string; model: string };
   presets: Preset[];
   onChange: (field: "provider" | "api_key" | "api_url" | "model", v: string) => void;
   testMode: "ocr" | "text";
+  test: SectionTest;
+  onTest: () => void;
   children?: React.ReactNode;
 }
 
 /** 单个 API 区块：预设下拉 + 地址/Key/模型 + 测试连接 */
-function ApiSection({ title, value, presets, onChange, testMode, children }: ApiSectionProps) {
+function ApiSection({ title, value, presets, onChange, testMode, test, onTest, children }: ApiSectionProps) {
   // 只按地址反推预设（用户决策 2026-09-06：预设只改地址，模型独立选择）
   const matched = presets.findIndex((p) => p.url === value.api_url && p.url);
   const presetIndex = matched >= 0 ? matched : presets.length - 1;
@@ -98,26 +113,6 @@ function ApiSection({ title, value, presets, onChange, testMode, children }: Api
     onChange("api_url", preset.url);
     onChange("provider", preset.provider);
     // 模型不随预设切换（用户决策：预设只改 API 地址，模型名称保持用户自选）
-  };
-
-  const [test, setTest] = useState<{
-    state: "idle" | "testing" | "ok" | "fail";
-    msg: string;
-  }>({ state: "idle", msg: "" });
-
-  const handleTest = async () => {
-    setTest({ state: "testing", msg: "" });
-    try {
-      const r = await testApiConnection({
-        api_url: value.api_url,
-        api_key: value.api_key,
-        model: value.model,
-        mode: testMode,
-      });
-      setTest({ state: "ok", msg: `连接成功（${r.model || value.model || "未知模型"}）` });
-    } catch (e) {
-      setTest({ state: "fail", msg: e instanceof Error ? e.message : String(e) });
-    }
   };
 
   const urlId = `${testMode}-url`;
@@ -185,7 +180,7 @@ function ApiSection({ title, value, presets, onChange, testMode, children }: Api
         <div className="flex items-center justify-between gap-3 pt-1">
           <button
             type="button"
-            onClick={handleTest}
+            onClick={onTest}
             disabled={test.state === "testing" || !value.api_url.trim()}
             className="btn-secondary"
           >
@@ -221,10 +216,15 @@ export default function ConfigPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState<null | { ok: boolean; msg: string }>(null);
+  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 两个区块的测试状态（提升到页面级：保存时自动补测并内联回显）
+  const [tests, setTests] = useState<{ ocr: SectionTest; text: SectionTest }>({
+    ocr: { state: "idle", msg: "" },
+    text: { state: "idle", msg: "" },
+  });
 
-  // 返回目标：已有解析结果 → 回阅读页（跟随当前阅读模式）；否则回主页
+  /** 返回目标：已有解析结果 → 回阅读页（跟随当前阅读模式）；否则回主页 */
   const backTarget =
     pages.length > 0 ? (mode === "inline" ? "/reader/inline" : "/reader/bilingual") : "/";
 
@@ -237,6 +237,42 @@ export default function ConfigPage() {
   }, [config]);
 
   if (!form) return <LoadingSpinner />;
+
+  const sectionOf = (m: "ocr" | "text") =>
+    m === "ocr" ? form.ocr : form.translate;
+
+  /** 手动点「测试连接」或保存时自动补测共用；结果内联回显在对应区块 */
+  const runTest = async (m: "ocr" | "text") => {
+    const cfg = sectionOf(m);
+    if (!cfg.api_url.trim()) return;
+    const spec = {
+      api_url: cfg.api_url,
+      api_key: cfg.api_key,
+      model: cfg.model,
+      mode: m,
+    };
+    setTests((prev) => ({ ...prev, [m]: { state: "testing", msg: "" } }));
+    try {
+      const r = await testApiConnection(spec);
+      setTests((prev) => ({
+        ...prev,
+        [m]: {
+          state: "ok",
+          msg: `连接成功（${r.model || cfg.model || "未知模型"}）`,
+          spec,
+        },
+      }));
+    } catch (e) {
+      setTests((prev) => ({
+        ...prev,
+        [m]: {
+          state: "fail",
+          msg: e instanceof Error ? e.message : String(e),
+          spec,
+        },
+      }));
+    }
+  };
 
   const updateField = (section: string, field: string, value: string) => {
     setForm((prev) =>
@@ -262,7 +298,7 @@ export default function ConfigPage() {
     }
     setSaving(true);
     setError(null);
-    setSaved(null);
+    setSaved(false);
     try {
       await saveConfig(form);
     } catch (e) {
@@ -271,33 +307,26 @@ export default function ConfigPage() {
       setSaving(false);
       return;
     }
-    // 保存后立即实测两个服务的连通性（2026-09-08 用户决策：取消"已配置"
-    // 徽标，连通性只在保存时验证）。保存不受测试结果影响（本地 Ollama
-    // 离线也允许保存），失败仅提示具体原因。
-    const failures: string[] = [];
-    await Promise.all([
-      testApiConnection({
-        api_url: form.ocr.api_url,
-        api_key: form.ocr.api_key,
-        model: form.ocr.model,
-        mode: "ocr",
-      }).catch((e: unknown) => {
-        failures.push(`OCR 服务连接失败：${e instanceof Error ? e.message : String(e)}`);
-      }),
-      testApiConnection({
-        api_url: form.translate.api_url,
-        api_key: form.translate.api_key,
-        model: form.translate.model,
-        mode: "text",
-      }).catch((e: unknown) => {
-        failures.push(`翻译服务连接失败：${e instanceof Error ? e.message : String(e)}`);
-      }),
-    ]);
-    setSaved(
-      failures.length === 0
-        ? { ok: true, msg: "已保存，两个服务均连接正常" }
-        : { ok: false, msg: `已保存，但 ${failures.join("；")}` },
-    );
+    // 2026-09-08 用户决策：保存时自动补测「在当前表单值下还没测成功过」的
+    // 服务（结果回显在各区块的测试按钮旁）；两个服务都已测成功则直接保存，
+    // 不再重复请求。测试结果不阻塞保存（本地 Ollama 离线也允许保存）。
+    const needTest = (["ocr", "text"] as const).filter((m) => {
+      const cfg = sectionOf(m);
+      const t = tests[m];
+      return !(
+        t.state === "ok" &&
+        sameSpec(t.spec, {
+          api_url: cfg.api_url,
+          api_key: cfg.api_key,
+          model: cfg.model,
+          mode: m,
+        })
+      );
+    });
+    if (needTest.length > 0) {
+      await Promise.all(needTest.map((m) => runTest(m)));
+    }
+    setSaved(true);
     setSaving(false);
   };
 
@@ -314,6 +343,8 @@ export default function ConfigPage() {
           presets={OCR_PRESETS}
           onChange={(field, v) => updateField("ocr", field, v)}
           testMode="ocr"
+          test={tests.ocr}
+          onTest={() => void runTest("ocr")}
         />
 
         <ApiSection
@@ -322,6 +353,8 @@ export default function ConfigPage() {
           presets={TRANSLATE_PRESETS}
           onChange={(field, v) => updateField("translate", field, v)}
           testMode="text"
+          test={tests.text}
+          onTest={() => void runTest("text")}
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
@@ -381,16 +414,10 @@ export default function ConfigPage() {
           </button>
           {saved && (
             <span
-              role={saved.ok ? "status" : "alert"}
-              title={saved.msg}
-              className={`animate-fade-in min-w-0 max-w-md truncate text-sm font-medium ${
-                saved.ok
-                  ? "text-emerald-600 dark:text-emerald-400"
-                  : "text-amber-600 dark:text-amber-400"
-              }`}
+              role="status"
+              className="animate-fade-in text-sm font-medium text-emerald-600 dark:text-emerald-400"
             >
-              {saved.ok ? "✓ " : "⚠ "}
-              {saved.msg}
+              ✓ 已保存
             </span>
           )}
           {error && (

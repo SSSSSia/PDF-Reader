@@ -276,6 +276,33 @@ async def _translate_figure_block(original_md: str, file_path: str, t_cfg: dict)
     return None
 
 
+def _extract_doc_title(pages: list) -> str:
+    """论文标题 = 首个 # 标题块文本（管线与缓存重建共用，阶段6-T3）。"""
+    for page in pages:
+        for block in page["blocks"]:
+            m = re.match(r"^#\s+(.{4,120})$", (block.get("original") or "").strip())
+            if m:
+                return m.group(1).strip()
+    return ""
+
+
+def _remove_running_header(pages: list, doc_title: str) -> None:
+    """剔除与文档标题相同的页眉运行标题块（原地修改，管线与缓存重建共用）。
+
+    真标题块带 "# " 前缀不受影响；比对时去掉 markdown 强调符
+    （标题块是 "# **Title**" 而页眉是裸文本）。
+    """
+    if not doc_title:
+        return
+    dt_cmp = doc_title.replace("*", "").strip()
+    for page in pages:
+        page["blocks"] = [
+            b
+            for b in page["blocks"]
+            if (b.get("original") or "").strip().replace("*", "") != dt_cmp
+        ]
+
+
 async def _load_or_run_ocr(file_path: str, pdf_hash: str, config: dict, job: dict) -> list:
     """混合 OCR（修复"内容不全"）+ 页级流式挂载（阶段1-T5）：
 
@@ -367,27 +394,12 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         pages = [_split_page(p) for p in pages]
         # 论文标题（首个 # 标题块）提前到合并前提取：页眉运行标题剔除
         # 必须发生在合并之前，防止裸标题行被当成续段合并目标误接
-        doc_title = ""
-        for page in pages:
-            for block in page["blocks"]:
-                m = re.match(r"^#\s+(.{4,120})$", (block.get("original") or "").strip())
-                if m:
-                    doc_title = m.group(1).strip()
-                    break
-            if doc_title:
-                break
+        doc_title = _extract_doc_title(pages)
         # 页眉运行标题（ACM/期刊版式每页重复的裸标题行，Survey 实测每页
         # 一块、还被模型回声成"假译文"）：与文档标题相同的块剔除。
         # 真标题块带 "# " 前缀不受影响；比对时去掉 markdown 强调符
         # （标题块是 "# **Title**" 而页眉是裸文本）
-        if doc_title:
-            dt_cmp = doc_title.replace("*", "").strip()
-            for page in pages:
-                page["blocks"] = [
-                    b
-                    for b in page["blocks"]
-                    if (b.get("original") or "").strip().replace("*", "") != dt_cmp
-                ]
+        _remove_running_header(pages, doc_title)
         # 跨页段落合并（阶段2-T3）：紧跟模式不再把跨页同段显示成两块残文
         pages = _merge_cross_page(pages)
         # 原版对照模式（阶段5-T1，D6）：为每个最终块标注页面坐标 bbox，
@@ -763,6 +775,89 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         job["error"] = str(e)
         job["progress"] = job.get("progress", 0)
         job["finished_at"] = time.time()
+
+
+async def open_cached_doc(pdf_hash: str, page_count: int, file_path: str) -> dict:
+    """阶段6-T3：从缓存重建已翻译文档（主页点卡片秒开）。
+
+    - 不跑 OCR、不发任何翻译 API 请求：页面块来自页级 OCR 缓存
+      （文本层伪模型名优先，扫描页视觉缓存兜底），译文按当前配置的
+      translate_key 读缓存——翻译后没改模型/语言时全文命中；
+    - 重建链路与管线同构：切块 → 标题提取/页眉剔除 → 跨页合并；
+    - 个别页缓存缺失保留空占位（保持页序）；整篇提取缓存全缺时抛
+      ValueError（端点转 404，引导重新翻译）；
+    - 源文件存在时附坐标标注（原版模式可用）；缺失时跳过（对照/紧跟
+      纯缓存 markdown 可用，原版模式由前端禁用）。
+
+    返回 {pages, file_exists, doc_title}。
+    """
+    cache_dir = settings.cache_dir
+    vision_model = settings.ocr_config.get("model", "")
+
+    pages: list = []
+    for i in range(max(0, page_count)):
+        cached = read_cache(cache_dir, ocr_key(pdf_hash, i, TEXT_LAYER_MODEL))
+        if cached and cached.get("blocks"):
+            pages.append({"page": i, "blocks": cached["blocks"]})
+            continue
+        vcached = read_cache(
+            cache_dir, ocr_key(pdf_hash, i, vision_model + VISION_CACHE_SUFFIX)
+        )
+        if vcached and vcached.get("blocks"):
+            pages.append({"page": i, "blocks": vcached["blocks"]})
+        else:
+            pages.append({"page": i, "blocks": []})
+    if not any(p["blocks"] for p in pages):
+        raise ValueError("该文档的提取缓存已不存在，请重新翻译")
+
+    pages = [_split_page(p) for p in pages]
+    doc_title = _extract_doc_title(pages)
+    _remove_running_header(pages, doc_title)
+    pages = _merge_cross_page(pages)
+
+    t_cfg = dict(settings.translate_config)
+    target_lang = t_cfg.get("target_language", "en")
+    model = t_cfg.get("model", "")
+
+    for page in pages:
+        for block in page["blocks"]:
+            original = sanitize.normalize_math_letters(
+                (block.get("original") or "").strip()
+            )
+            block["original"] = original
+            if not original:
+                block["translated"] = ""
+                continue
+            if _PURE_IMAGE.match(original):
+                block["translated"] = original  # 图表块：译文=原图快照
+                continue
+            if sanitize.is_formula_block(original):
+                block["translated"] = original
+                block["formula_hint"] = True
+                bbox = block.get("bbox")
+                if bbox:
+                    from ocr.formula import load_cached_formula
+
+                    cached_latex = load_cached_formula(
+                        pdf_hash, page["page"], bbox, settings.ocr_config, cache_dir
+                    )
+                    if cached_latex:
+                        block["translated"] = cached_latex
+                continue
+            key = translate_key(text_hash(original), target_lang, model, PROMPT_VERSION)
+            cached = read_cache(cache_dir, key)
+            block["translated"] = (cached or {}).get("translated", "")
+
+    file_exists = bool(file_path) and os.path.isfile(file_path)
+    if file_exists:
+        try:
+            from pipeline.layout import attach_block_bboxes
+
+            await asyncio.to_thread(attach_block_bboxes, file_path, pages)
+        except Exception as e:  # 原版模式是增值能力，绝不阻断重开
+            print(f"[docs_open] bbox 标注失败（原版模式降级为无坐标）: {e}")
+
+    return {"pages": pages, "file_exists": file_exists, "doc_title": doc_title}
 
 
 async def get_pipeline_status(job_id: str) -> dict:

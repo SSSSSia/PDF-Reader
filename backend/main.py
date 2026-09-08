@@ -318,6 +318,51 @@ async def api_set_config(payload: dict):
     return {"status": "ok"}
 
 
+@app.get("/api/docs")
+async def api_list_docs():
+    """主页"已翻译文章"列表（阶段6-T3）。file_exists 供前端标记源文件缺失。"""
+    import docs_index
+
+    data_dir = os.path.dirname(settings.config_path)
+    docs = docs_index.load_index(data_dir)
+    for d in docs:
+        d["file_exists"] = bool(d.get("file_path")) and os.path.isfile(d["file_path"])
+    return {"docs": docs}
+
+
+@app.post("/api/docs/open")
+async def api_open_doc(payload: dict):
+    """按 doc_id 从缓存重建已翻译会话（阶段6-T3）：零 API 调用、秒开。
+
+    源文件存在时附带坐标标注（原版模式可用）；缺失时对照/紧跟模式
+    纯缓存 markdown 仍完整可用，原版模式由前端禁用并提示。
+    提取缓存已清空时返回 404，前端引导重新翻译。
+    """
+    import docs_index
+    from pipeline import processor
+
+    doc_id = str(payload.get("doc_id") or "").strip()
+    doc = (
+        docs_index.get_doc(os.path.dirname(settings.config_path), doc_id)
+        if doc_id
+        else None
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="文档索引中不存在该记录")
+    try:
+        result = await processor.open_cached_doc(
+            doc.get("pdf_hash", ""),
+            int(doc.get("page_count") or 0),
+            doc.get("file_path") or "",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception:
+        logger.exception("重开文档失败 doc_id=%s", doc_id)
+        raise HTTPException(status_code=502, detail="重开文档失败，详见后端日志")
+    return {**result, "doc": doc}
+
+
 @app.post("/api/upload")
 async def api_upload(file: UploadFile = File(...)):
     """dev 桥接模式：浏览器无法拿到真实文件路径，故先上传到服务端临时目录，

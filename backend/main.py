@@ -147,6 +147,8 @@ async def api_block_translate(payload: dict):
     from translate.providers.openai_compat import PROMPT_VERSION
 
     original = str(payload.get("original") or "")
+    # 与全文管线一致：数学字母区规范化后再保护/翻译/算缓存键（2026-09-08）
+    original = sanitize.normalize_math_letters(original).strip()
     if not original.strip():
         raise HTTPException(status_code=400, detail="原文为空")
     t_cfg = dict(settings.translate_config)

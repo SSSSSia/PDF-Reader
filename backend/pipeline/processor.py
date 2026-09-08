@@ -419,6 +419,11 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         for page in pages:
             for block in page["blocks"]:
                 original = (block.get("original") or "").strip()
+                # 数学字母区规范化（2026-09-08）：𝒩→N、𝑥→x，翻译模型与
+                # 公式保护都不再被怪字符干扰；在缓存键计算前做，全文管线
+                # 与单块重翻键一致。改动会使旧缓存自然失效重翻（期望行为）
+                original = sanitize.normalize_math_letters(original)
+                block["original"] = original
                 if not original:
                     block["translated"] = ""
                     continue
@@ -470,6 +475,12 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                         if cached_latex:
                             block["translated"] = cached_latex
                     continue
+                # 数学密集混合块（2026-09-08）：散文+行内公式，行内数学在
+                # 提取层已拍平（◆/𝑥/_x_^），照常翻译救不回结构——只打标，
+                # 前端出「式」按钮走视觉重识别，识别结果替换原文后自动重译
+                if sanitize.has_heavy_math(original):
+                    block["formula_hint"] = True
+                    block["math_mixed"] = True
                 key = translate_key(
                     text_hash(original), target_lang, model, PROMPT_VERSION
                 )

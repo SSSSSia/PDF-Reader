@@ -20,6 +20,11 @@ interface PdfState {
     blockId: number,
     translated: string,
   ) => void;
+  /**
+   * 原文替换（2026-09-08）：公式混合块「式」识别后用干净 markdown
+   * （英文正文+$..$ 公式）替换拍平原稿，原文栏同步变干净
+   */
+  updateBlockOriginal: (page: number, blockId: number, original: string) => void;
   setCurrentPage: (page: number) => void;
   setLoading: (loading: boolean) => void;
   setProgress: (progress: number) => void;
@@ -50,6 +55,19 @@ export const usePdfStore = create<PdfState>((set) => ({
               ...p,
               blocks: p.blocks.map((b) =>
                 b.block_id === blockId ? { ...b, translated } : b,
+              ),
+            },
+      ),
+    })),
+  updateBlockOriginal: (page, blockId, original) =>
+    set((state) => ({
+      pages: state.pages.map((p) =>
+        p.page !== page
+          ? p
+          : {
+              ...p,
+              blocks: p.blocks.map((b) =>
+                b.block_id === blockId ? { ...b, original } : b,
               ),
             },
       ),

@@ -12,7 +12,12 @@ from translate.providers.openai_compat import (
     OpenAICompatProvider,
     parse_segments,
 )
-from translate.sanitize import is_formula_block, protect_formulas, protect_math
+from translate.sanitize import (
+    is_formula_block,
+    normalize_math_letters,
+    protect_formulas,
+    protect_math,
+)
 
 
 # ── sanitize.protect_math ────────────────────────────────────────────
@@ -85,6 +90,84 @@ def test_paragraph_with_identifier_not_detected():
 
 def test_short_text_never_formula():
     assert is_formula_block("_E_⁰") is False
+
+
+# ── sanitize.has_heavy_math（数学密集混合块，2026-09-08 截图实测）──────
+
+
+def test_heavy_math_replacement_char_detected():
+    """GMM 似然段（截图1/3）：∑ 被 OCR 成 ◆ + 数学碎片散布正文。"""
+    seg = (
+        "The overall probability distribution is a weighted combination "
+        "P(x) = ◆Kk =1_πrkN_\\x;μk,Σk, where πrk signifies the mixture "
+        "weight for the k_th Gaussian distribution."
+    )
+    from translate.sanitize import has_heavy_math
+
+    assert has_heavy_math(seg) is True
+
+
+def test_heavy_math_single_sub_wrapping_detected():
+    """BIC 段（截图2）：上下标拍平成 _BIC_、_L_^ 形态。"""
+    seg = (
+        "The BIC for a given GMM is _BIC_ = ln(N) k − 2 ln(_L_^), where N "
+        "is the number of text segments, k is the number of model "
+        "parameters, and _L_^ is the maximized value of the likelihood."
+    )
+    from translate.sanitize import has_heavy_math
+
+    assert has_heavy_math(seg) is True
+
+
+def test_heavy_math_math_alphabet_detected():
+    """数学字母区（U+1D400–1D7FF）字符 ≥3 即命中（𝑥𝜇Σ 连续出现）。"""
+    from translate.sanitize import has_heavy_math
+
+    assert has_heavy_math("given by 𝑥𝜇𝛴𝑥 in the embedding space of vectors") is True
+
+
+def test_heavy_math_plain_prose_not_detected():
+    from translate.sanitize import has_heavy_math
+
+    para = (
+        "Graph-based retrieval augmented generation has attracted increasing "
+        "attention. We evaluate our method on five benchmarks and report "
+        "results in Table 1 of the paper."
+    )
+    assert has_heavy_math(para) is False
+
+
+def test_heavy_math_snake_case_identifiers_not_detected():
+    """普通代码标识符（多字符段）不得误中单字符下标判据。"""
+    from translate.sanitize import has_heavy_math
+
+    para = (
+        "We set the learning rate to 0.001 and use the adam_optimizer "
+        "with batch_size of 32 and hidden_dim of 768 for all experiments."
+    )
+    assert has_heavy_math(para) is False
+
+
+# ── sanitize.normalize_math_letters（数学字母区 NFKC 规范化）──────────
+
+
+def test_normalize_math_letters_nfkc():
+    """𝒩→N、𝑥→x、𝜇→μ：数学字母区转常规字符。"""
+    assert normalize_math_letters("𝒩(x; 𝜇k, Σk)") == "N(x; μk, Σk)"
+    assert normalize_math_letters("the vector 𝑥 belongs to cluster") == (
+        "the vector x belongs to cluster"
+    )
+
+
+def test_normalize_math_letters_keeps_subsup():
+    """整串不 NFKC：上下标字符（²、ₖ）语义必须保留。"""
+    src = "E₀² = _{e_ 1⁰_}"
+    assert normalize_math_letters(src) == src
+
+
+def test_normalize_math_letters_noop_without_math():
+    src = "plain text with no special characters"
+    assert normalize_math_letters(src) == src
 
 
 # ── sanitize.protect_formulas（片段级保护）──────────────────────────

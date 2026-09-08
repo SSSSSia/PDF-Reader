@@ -41,6 +41,12 @@ export interface TextBlock {
   bboxes?: { page: number; bbox: [number, number, number, number] }[] | null;
   /** 公式密集块（后端 is_formula_block 判定）：hover 出「式」按钮按需 OCR 识别 LaTeX */
   formula_hint?: boolean;
+  /**
+   * 数学密集混合块（后端 has_heavy_math 判定，2026-09-08）：散文+行内公式，
+   * 提取层已把行内数学拍平（◆/𝑥/_x_^）。与 formula_hint 同置——「式」识别
+   * 结果含正文时替换原文并自动重译；同时保留「译」按钮（普通翻译路径仍可用）
+   */
+  math_mixed?: boolean;
 }
 
 export interface PageResult {

@@ -16,6 +16,7 @@
 """
 
 import re
+import unicodedata
 
 # 行内 \( ... \)（pymupdf4llm 输出的 LaTeX 行内公式定界符）
 _MATH_INLINE = re.compile(r"\\\((.+?)\\\)", re.S)
@@ -197,6 +198,60 @@ def is_fused_translation(original: str, translated: str) -> bool:
     ):
         return True
     return False
+
+
+# 数学字母区（U+1D400–U+1D7FF：数学斜体/花体/无衬线，视觉模型 OCR 常见产物）
+_MATH_LETTERS = re.compile(r"[\U0001D400-\U0001D7FF]")
+# 提取层字体缺失替换符（∑→◆ 等——结构性损坏的铁证，正常文本不该出现）
+_REPLACEMENT_CHARS = "◆◊□◦�"
+# 单字符下标包裹形态：_L_^、_N_、_k_（2026-09-08 截图实测）；snake_case
+# 标识符是多字符段，不会命中此模式
+_SINGLE_SUB = re.compile(r"_[A-Za-z0-9][_^]")
+
+
+def has_heavy_math(md: str) -> bool:
+    """**散文+行内公式混合块**的数学密集判定（2026-09-08 用户反馈）。
+
+    is_formula_block 只捕捉纯公式块（可读单词<10）；这类混合块（单词
+    ≥10）照常走翻译——但原文中的行内数学在提取层已被拍平成残骸
+    （𝒩 变数学斜体、∑ 变 ◆、上下标变 _x_^），翻译保护层只能原样
+    还原，救不回结构。命中后打 formula_hint+math_mixed：前端「式」
+    按钮走视觉重识别（PaddleOCR-VL 整块转 markdown+$..$），识别结果
+    替换原文后自动单块重译，原文译文同时变干净。
+
+    判据（命中任一即 True）：
+    1. 数学字母区字符 ≥3——正文不会连续出现数学斜体字母；
+    2. 替换符 ≥1 且数学噪声（_/^/上下标字符）≥2；
+    3. 单字符下标包裹 ≥2 且 _ 总数 ≥4。
+    误报代价低（多个按钮入口），漏报代价高（用户没有修复入口），
+    故判据适度宽松。
+    """
+    t = md or ""
+    if len(t) < 12:
+        return False
+    if len(_MATH_LETTERS.findall(t)) >= 3:
+        return True
+    repl = sum(t.count(c) for c in _REPLACEMENT_CHARS)
+    noise = t.count("_") + t.count("^") + sum(t.count(c) for c in _SUBSUP_SET)
+    if repl >= 1 and noise >= 2:
+        return True
+    return len(_SINGLE_SUB.findall(t)) >= 2 and t.count("_") >= 4
+
+
+def normalize_math_letters(text: str) -> str:
+    """数学字母区字符 NFKC 规范化（𝒩→N、𝑥→x），只碰 U+1D400–1D7FF。
+
+    不整串 NFKC：上下标字符（²、ₖ）会被退化成普通数字丢失语义。
+    数学字母区规范化无损，且让翻译模型与 protect_formulas 的 token
+    判定都不再被怪字符干扰。在 original 进入管线/缓存键计算之前调用，
+    保证全文管线与单块重翻的缓存键一致。
+    """
+    if not text or not _MATH_LETTERS.search(text):
+        return text
+    return "".join(
+        unicodedata.normalize("NFKC", c) if 0x1D400 <= ord(c) <= 0x1D7FF else c
+        for c in text
+    )
 
 
 def is_formula_block(md: str) -> bool:

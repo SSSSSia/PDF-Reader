@@ -6,6 +6,7 @@ import { usePdfStore } from "../stores/pdfStore";
 import { convertFileSrc } from "../lib/bridge";
 import MarkdownText from "./common/MarkdownText";
 import BlockTranslateButton from "./common/BlockTranslateButton";
+import FormulaButton from "./common/FormulaButton";
 import type { PageResult, TextBlock } from "../types";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -338,7 +339,15 @@ function BlockCard({
           译文
         </span>
         <div className="flex items-center gap-1.5">
-          <BlockTranslateButton block={block} />
+          {/* 公式块出「式」（混合块式+译并存，2026-09-08），其余「译/重译」 */}
+          {block.formula_hint ? (
+            <>
+              <FormulaButton block={block} />
+              {block.math_mixed && <BlockTranslateButton block={block} />}
+            </>
+          ) : (
+            <BlockTranslateButton block={block} />
+          )}
           <button
             onClick={onClose}
             aria-label="关闭"

@@ -24,7 +24,8 @@ const isPureImage = (t: string) => /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(t);
 export default function InlinePage() {
   const { pages, isLoading, progress, error } = usePdfStore();
   const readerMode = useUiStore((s) => s.readerMode);
-  const zoom = useUiStore((s) => s.zoom);
+  // 阶段7-T2：用户未手动设置过缩放（null）时，重排版缺省 100%（排版基准）
+  const zoom = useUiStore((s) => s.zoom) ?? 1;
   const zoomRef = useZoomWheel<HTMLDivElement>();
   const blocks = pages.flatMap((p) => p.blocks);
 

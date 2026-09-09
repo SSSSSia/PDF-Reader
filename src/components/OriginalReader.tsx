@@ -3,7 +3,8 @@ import * as pdfjsLib from "pdfjs-dist";
 // Vite 把 worker 作为本地资源打包（与 usePdfThumbnails 同一约定；重复赋值 workerSrc 幂等）
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { usePdfStore } from "../stores/pdfStore";
-import { useUiStore } from "../stores/uiStore";
+import { useUiStore, effectiveZoom } from "../stores/uiStore";
+import { useZoomWheel } from "../hooks/useZoomWheel";
 import { convertFileSrc } from "../lib/bridge";
 import MarkdownText from "./common/MarkdownText";
 import BlockTranslateButton from "./common/BlockTranslateButton";
@@ -34,11 +35,16 @@ type PageLayout = { scale: number; w: number; h: number };
 export default function OriginalReader() {
   const filePath = usePdfStore((s) => s.filePath);
   const pages = usePdfStore((s) => s.pages);
-  // 阶段7-T1：zoom 收敛到 uiStore 全局缩放（三形态共用 + localStorage 持久化；
-  // Ctrl+滚轮由阅读页根容器的 useZoomWheel 驱动，± 控件统一在工具栏，
+  // 阶段7-T1/T2：zoom 收敛到 uiStore 全局缩放（三形态共用 + localStorage 持久化；
+  // Ctrl+滚轮由本组件根容器 useZoomWheel 驱动，± 控件统一在工具栏，
   // 此处不再放重复控件——2026-09-09 用户反馈两处缩放计数重复）。
-  // 范围统一 0.7–2.0、步进 0.1（原 0.5–3/0.15 与其他形态不一致）。
-  const zoom = useUiStore((s) => s.zoom);
+  // 阶段7-T2：用户未手动设置过缩放（zoom=null）时，原版缺省 70%
+  // （固定版式 100% 偏大，70% 更接近 PDF 阅读器惯例）；设置过则全形态用用户值。
+  const zoom = effectiveZoom(
+    useUiStore((s) => s.zoom),
+    useUiStore((s) => s.readerMode)
+  );
+  const zoomRef = useZoomWheel<HTMLDivElement>();
   const [pdf, setPdf] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -108,10 +114,14 @@ export default function OriginalReader() {
   }, [pages]);
 
   return (
-    <div
-      ref={wrapRef}
-      className="relative h-[calc(100vh-170px)] overflow-auto bg-slate-200 dark:bg-slate-950"
-    >
+    /* 外层 wrapper 挂 Ctrl+滚轮缩放 hook（事件冒泡至此监听，
+       preventDefault 仍可拦 WebView2 页面缩放）；内层滚动容器
+       的 wrapRef 专职 wrapW 测量（fit-width 基准，一个节点一个 ref） */
+    <div ref={zoomRef}>
+      <div
+        ref={wrapRef}
+        className="relative h-[calc(100vh-170px)] overflow-auto bg-slate-200 dark:bg-slate-950"
+      >
       {/* 缩放走工具栏统一控件（阶段7-T1）：此处不再放重复的 ± 控件。
           「点高亮块看译文」操作提示保留为纯文字小条。 */}
       <div className="sticky left-2 top-2 z-20 w-max rounded-lg border border-slate-300 bg-white/95 px-2 py-1 text-xs text-slate-400 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-500">
@@ -154,6 +164,7 @@ export default function OriginalReader() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }

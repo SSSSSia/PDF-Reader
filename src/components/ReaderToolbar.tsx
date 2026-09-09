@@ -1,5 +1,11 @@
 import { Link, useNavigate } from "react-router-dom";
-import { useUiStore, ZOOM_MAX, ZOOM_MIN } from "../stores/uiStore";
+import {
+  useUiStore,
+  effectiveZoom,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  ZOOM_ORIGINAL_DEFAULT,
+} from "../stores/uiStore";
 import { usePdfStore } from "../stores/pdfStore";
 import ExportBar from "./ExportBar";
 
@@ -14,11 +20,14 @@ import ExportBar from "./ExportBar";
  * 点击百分比重置 100%）。三形态共用同一缩放值。
  */
 export default function ReaderToolbar() {
-  const { mode, setMode, readerMode, setReaderMode, zoom, stepZoom, resetZoom } =
+  const { mode, setMode, readerMode, setReaderMode, zoom: zoomRaw, stepZoom, resetZoom } =
     useUiStore();
   const { filePath, file } = usePdfStore();
   const navigate = useNavigate();
   const sourceMissing = !filePath;
+  // 阶段7-T2：显示与边界判断用有效缩放值（未设置过时按形态回落缺省：
+  // 原版 70% / 重排版 100%），与阅读区实际渲染一致
+  const zoom = effectiveZoom(zoomRaw, readerMode);
   // 文章标题：重开文档时为 doc.title，新翻译时为文件名（去 .pdf 后缀）
   const docTitle = (file?.name ?? "").replace(/\.pdf$/i, "");
 
@@ -100,7 +109,8 @@ export default function ReaderToolbar() {
             原版
           </button>
         </div>
-        {/* 阶段7-T1 全局缩放：三形态共用 uiStore.zoom；点击百分比重置 100% */}
+        {/* 阶段7-T1/T2 全局缩放：三形态共用；百分比重置回形态缺省
+            （原版 70% / 重排版 100%，并清除持久化） */}
         <div
           className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-1 py-0.5 dark:border-slate-700 dark:bg-slate-800"
           role="group"
@@ -117,7 +127,11 @@ export default function ReaderToolbar() {
           </button>
           <button
             onClick={resetZoom}
-            title="点击重置为 100%"
+            title={
+              originalActive
+                ? `点击重置为缺省 ${Math.round(ZOOM_ORIGINAL_DEFAULT * 100)}%`
+                : "点击重置为 100%"
+            }
             className="w-11 text-center text-xs tabular-nums text-slate-600 transition-colors duration-150 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
           >
             {Math.round(zoom * 100)}%

@@ -112,10 +112,10 @@ export default function OriginalReader() {
   return (
     <div
       ref={wrapRef}
-      className="relative h-[calc(100vh-170px)] overflow-y-auto bg-slate-200 dark:bg-slate-950"
+      className="relative h-[calc(100vh-170px)] overflow-auto bg-slate-200 dark:bg-slate-950"
     >
-      {/* 缩放控制（吸顶悬浮） */}
-      <div className="sticky top-2 z-20 mx-auto flex w-max items-center gap-2 rounded-lg border border-slate-300 bg-white/95 px-2 py-1 text-xs shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95">
+      {/* 缩放控制（吸顶吸附左上：横向滚动（放大超宽）时也保持可见） */}
+      <div className="sticky left-2 top-2 z-20 flex w-max items-center gap-2 rounded-lg border border-slate-300 bg-white/95 px-2 py-1 text-xs shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95">
         <button
           onClick={() => stepZoom(-0.1)}
           className="h-6 w-6 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"

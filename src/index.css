@@ -85,32 +85,34 @@
 
 /* ---------- 阶段7-T1 全局缩放：prose 根字号随 --reader-zoom 缩放 ----------
    内容容器注入 `--reader-zoom`（uiStore.zoom），MarkdownText 的 prose 根
-   挂 .prose-zoomable。放在 layer 外（unlayered）以压过 typography 的
-   rem 字号 utilities：
+   挂 .prose-zoomable。选择器用 `.prose.prose-zoomable`（0,2,0）**特异性
+   压过** typography 的 `.prose-sm`/`.sm:prose-base`/`prose-h1:text-xl`
+   （均为 0,1,0）——不依赖源顺序/layer 博弈（首轮实现用单类选择器，
+   实测被 typography 压制导致缩放无视觉效果，2026-09-09 用户反馈）：
    1) 根字号 = 默认(≤sm) prose-sm 0.875rem / ≥sm prose-base 1rem × 缩放；
    2) 标题用 em 相对根字号（zoom=1 时与原 prose-h1:text-xl 等数值一致，
       视觉零变化），正文/行高（em）自然跟随；
    3) 未注入变量的位置（如原版模式译文浮层）回落 1，浮层保持 chrome 尺寸。 */
-.prose-zoomable {
+.prose.prose-zoomable {
   font-size: calc(0.875rem * var(--reader-zoom, 1));
 }
 
 @media (min-width: 640px) {
-  .prose-zoomable {
+  .prose.prose-zoomable {
     font-size: calc(1rem * var(--reader-zoom, 1));
   }
 }
 
-.prose-zoomable h1 {
+.prose.prose-zoomable h1 {
   font-size: 1.25em;
 }
 
-.prose-zoomable h2 {
+.prose.prose-zoomable h2 {
   font-size: 1.125em;
 }
 
-.prose-zoomable h3,
-.prose-zoomable h4 {
+.prose.prose-zoomable h3,
+.prose.prose-zoomable h4 {
   font-size: 1em;
 }
 

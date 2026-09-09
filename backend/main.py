@@ -333,7 +333,63 @@ async def api_list_docs():
     docs = docs_index.load_index(settings.data_dir)
     for d in docs:
         d["file_exists"] = bool(d.get("file_path")) and os.path.isfile(d["file_path"])
-    return {"docs": docs}
+    return {"docs": docs, "folders": docs_index.load_folders(settings.data_dir)}
+
+
+@app.post("/api/folders")
+async def api_create_folder(payload: dict):
+    """新建文件夹（侧边栏分组，2026-09-09 靠岸学术风格改版）。"""
+    import docs_index
+
+    try:
+        folder = docs_index.add_folder(settings.data_dir, payload.get("name"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"folder": folder}
+
+
+@app.post("/api/folders/rename")
+async def api_rename_folder(payload: dict):
+    import docs_index
+
+    folder_id = str(payload.get("folder_id") or "").strip()
+    try:
+        hit = docs_index.rename_folder(
+            settings.data_dir, folder_id, payload.get("name")
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not hit:
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+    return {"ok": True}
+
+
+@app.post("/api/folders/delete")
+async def api_delete_folder(payload: dict):
+    """删除文件夹；其中文档回到未分类（不删文档记录与缓存）。"""
+    import docs_index
+
+    folder_id = str(payload.get("folder_id") or "").strip()
+    docs_index.delete_folder(settings.data_dir, folder_id)
+    return {"ok": True}
+
+
+@app.post("/api/docs/move")
+async def api_move_doc(payload: dict):
+    """移动文档到文件夹（folder_id=null 表示移出归未分类）。"""
+    import docs_index
+
+    doc_id = str(payload.get("doc_id") or "").strip()
+    folder_id = payload.get("folder_id")
+    folder_id = str(folder_id).strip() if folder_id else None
+    if folder_id and not any(
+        f.get("folder_id") == folder_id
+        for f in docs_index.load_folders(settings.data_dir)
+    ):
+        raise HTTPException(status_code=404, detail="目标文件夹不存在")
+    if not docs_index.set_doc_folder(settings.data_dir, doc_id, folder_id):
+        raise HTTPException(status_code=404, detail="文档索引中不存在该记录")
+    return {"ok": True}
 
 
 @app.post("/api/docs/open")

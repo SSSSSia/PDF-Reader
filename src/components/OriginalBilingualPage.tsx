@@ -47,7 +47,11 @@ export default function OriginalBilingualPage() {
   const cardRefs = useRef<Map<number, HTMLElement | null>>(new Map());
   const [pageMeta, setPageMeta] = useState<Map<number, PageMeta>>(new Map());
 
-  // 左栏宽度跟踪（fit-width 基准；右栏镜像几何同源此值）
+  // 左栏宽度跟踪（fit-width 基准；右栏镜像几何同源此值）。
+  // 依赖必须带 pdf：面板 div 在 {pdf && ...} 分支内，挂载时 pdf 未就绪
+  // 则 ref 为 null——只跑一次的 effect 会永久丢失 ResizeObserver 绑定，
+  // leftW 恒 0 → canvas 永不渲染、pageMeta 永不上报（右栏一片空白的
+  // 根因，2026-09-09 用户验收反馈，浏览器实测 canvas 全为默认 300×150）
   useEffect(() => {
     const el = leftPaneRef.current;
     if (!el) return;
@@ -56,7 +60,7 @@ export default function OriginalBilingualPage() {
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [pdf]);
 
   // 每页布局上报（渲染完成/缩放重渲染后右栏占位同步）
   const onMeta = useCallback((pageNo: number, meta: PageMeta) => {

@@ -111,28 +111,6 @@ export default function ReaderToolbar() {
           </span>
           <button
             role="tab"
-            aria-selected={readerMode === "original_click"}
-            disabled={sourceMissing}
-            title={
-              sourceMissing
-                ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
-                : "按原版排版，点击高亮块查看译文（已选中时点击切回重排版）"
-            }
-            onClick={() =>
-              setReaderMode(
-                readerMode === "original_click" ? "parallel" : "original_click"
-              )
-            }
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
-              readerMode === "original_click"
-                ? "bg-white text-blue-700 shadow-sm dark:bg-slate-700 dark:text-blue-300"
-                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            点击翻译
-          </button>
-          <button
-            role="tab"
             aria-selected={readerMode === "original_bilingual"}
             disabled={sourceMissing}
             title={
@@ -154,6 +132,28 @@ export default function ReaderToolbar() {
             }`}
           >
             左右对照
+          </button>
+          <button
+            role="tab"
+            aria-selected={readerMode === "original_click"}
+            disabled={sourceMissing}
+            title={
+              sourceMissing
+                ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
+                : "按原版排版，点击高亮块查看译文（已选中时点击切回重排版）"
+            }
+            onClick={() =>
+              setReaderMode(
+                readerMode === "original_click" ? "parallel" : "original_click"
+              )
+            }
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
+              readerMode === "original_click"
+                ? "bg-white text-blue-700 shadow-sm dark:bg-slate-700 dark:text-blue-300"
+                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            点击翻译
           </button>
         </div>
         {/* 阶段7-T1/T2 全局缩放：三形态共用；百分比重置回形态缺省

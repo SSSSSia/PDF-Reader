@@ -1,22 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as pdfjsLib from "pdfjs-dist";
-// Vite 把 worker 作为本地资源打包（与 usePdfThumbnails 同一约定；重复赋值 workerSrc 幂等）
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore, effectiveZoom } from "../stores/uiStore";
 import { useZoomWheel } from "../hooks/useZoomWheel";
-import { convertFileSrc } from "../lib/bridge";
+import { usePdfDocument } from "../hooks/usePdfDocument";
+import { useLazyPage, type PageLayout } from "../hooks/useLazyPage";
 import MarkdownText from "./common/MarkdownText";
 import BlockTranslateButton from "./common/BlockTranslateButton";
 import FormulaButton from "./common/FormulaButton";
-import type { PageResult, TextBlock } from "../types";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+import type { TextBlock } from "../types";
 
 type BBox = [number, number, number, number];
 type BBoxSeg = { page: number; bbox: BBox };
 type Overlay = { block: TextBlock; bb: BBox };
-type PageLayout = { scale: number; w: number; h: number };
 
 /**
  * 原版对照模式（阶段5-T3，D6 立项）：pdfjs 原样渲染 PDF 页面（公式/图表/
@@ -25,7 +20,8 @@ type PageLayout = { scale: number; w: number; h: number };
  *
  * 设计要点（Spike 实测依据见 docs/阶段4-原生渲染路线评估.md §4.1）：
  * - 连续滚动逐页懒渲染：IntersectionObserver(rootMargin 600px) 触发，
- *   渲染任务可取消（task.cancel）防止快速滚动时的渲染竞态；
+ *   渲染任务可取消（task.cancel）防止快速滚动时的渲染竞态
+ *   （阶段7-T4 抽为 usePdfDocument/useLazyPage，与左右对照形态共用）；
  * - fit-width × devicePixelRatio × zoom：canvas 物理像素按 dpr 放大保证
  *   高清，CSS 尺寸按逻辑 scale 定位——overlay 坐标 = bbox(pt) × scale；
  * - bbox 为 PyMuPDF top-left 原点坐标，与 pdfjs 旋转 0° viewport 直接
@@ -45,39 +41,9 @@ export default function OriginalReader() {
     useUiStore((s) => s.readerMode)
   );
   const zoomRef = useZoomWheel<HTMLDivElement>();
-  const [pdf, setPdf] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { pdf, error } = usePdfDocument(filePath);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [wrapW, setWrapW] = useState(0);
-
-  // 加载 PDF 文档（桥接层双模：Tauri convertFileSrc / 浏览器 /api/file/raw）
-  useEffect(() => {
-    if (!filePath) return;
-    let cancelled = false;
-    let doc: any = null;
-    (async () => {
-      try {
-        setError(null);
-        // pdfjs 6 破坏性变更：getDocument 只收 DocumentInitParameters 对象，
-        // 裸字符串简写已删除（传 string 时 src.url 为 undefined 直接抛
-        // "expected either data, range, or url parameter"，实测踩坑）
-        doc = await pdfjsLib
-          .getDocument({ url: convertFileSrc(filePath) } as any)
-          .promise;
-        if (cancelled) {
-          doc.destroy?.();
-          return;
-        }
-        setPdf(doc);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      }
-    })();
-    return () => {
-      cancelled = true;
-      doc?.destroy?.();
-    };
-  }, [filePath]);
 
   // 视口宽度跟踪（fit-width 基准）
   useEffect(() => {
@@ -183,66 +149,16 @@ function OriginalPage({
   wrapW: number;
   zoom: number;
 }) {
-  const holderRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [near, setNear] = useState(false);
-  const [layout, setLayout] = useState<PageLayout | null>(null);
-  const [rotated, setRotated] = useState(false);
+  // 懒渲染逻辑抽至 useLazyPage（阶段7-T4，与左右对照形态共用）
+  const { holderRef, canvasRef, layout, rotated } = useLazyPage({
+    pdf,
+    pageNo,
+    renderW: wrapW,
+    zoom,
+  });
   const [selected, setSelected] = useState<{ block: TextBlock; bb: BBox } | null>(
     null
   );
-
-  // 接近视口才启动渲染（懒加载，长文档滚动不卡）
-  useEffect(() => {
-    const el = holderRef.current;
-    if (!el) return;
-    const io = new IntersectionObserver(
-      (es) => {
-        if (es.some((e) => e.isIntersecting)) {
-          setNear(true);
-          io.disconnect();
-        }
-      },
-      { rootMargin: "600px 0px" }
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
-
-  // 渲染当前页（任务可取消：快速滚动/改缩放时不做无用功）
-  useEffect(() => {
-    if (!near || !pdf || !canvasRef.current || wrapW <= 0) return;
-    let cancelled = false;
-    let task: any = null;
-    (async () => {
-      try {
-        const page = await pdf.getPage(pageNo);
-        if (cancelled) return;
-        if (((page.rotate as number) ?? 0) % 360 !== 0) setRotated(true);
-        const base = page.getViewport({ scale: 1 });
-        const scale = ((wrapW - 48) / base.width) * zoom;
-        const dpr = window.devicePixelRatio || 1;
-        const viewport = page.getViewport({ scale: scale * dpr });
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        canvas.width = Math.max(1, Math.floor(viewport.width));
-        canvas.height = Math.max(1, Math.floor(viewport.height));
-        canvas.style.width = `${Math.floor(scale * base.width)}px`;
-        canvas.style.height = `${Math.floor(scale * base.height)}px`;
-        task = page.render({ canvas, viewport });
-        await task.promise;
-        if (!cancelled)
-          setLayout({ scale, w: scale * base.width, h: scale * base.height });
-      } catch (e: any) {
-        if (!cancelled && e?.name !== "RenderingCancelledException")
-          console.error(`原版渲染 p${pageNo} 失败:`, e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      task?.cancel?.();
-    };
-  }, [near, pdf, pageNo, wrapW, zoom]);
 
   return (
     <div

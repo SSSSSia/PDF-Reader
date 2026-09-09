@@ -88,3 +88,33 @@ def test_rebuild_keeps_page_order_on_partial_cache(monkeypatch):
     assert [p["page"] for p in out["pages"]] == [0, 1, 2]
     assert out["pages"][0]["blocks"] == []
     assert out["pages"][1]["blocks"]
+
+
+def test_extract_doc_title_skips_generic_headings():
+    """「Abstract」等章节头被误判成顶级标题时，应跳过取下一个真实标题。"""
+    from pipeline.processor import _extract_doc_title
+
+    def mk(pages_text):
+        return [{"page": 0, "blocks": [{"original": t} for t in pages_text]}]
+
+    pages = mk(["# Abstract", "# DALK: Dual Aligned Knowledge Graphs", "# 1 Introduction"])
+    assert _extract_doc_title(pages) == "DALK: Dual Aligned Knowledge Graphs"
+    # 带编号/冒号的通用名也跳过
+    assert _extract_doc_title(mk(["# 1 Introduction", "# Results: all good"])) == "Results: all good"
+    # 全部是通用章节名 → 空串（索引回退文件名）
+    assert _extract_doc_title(mk(["# Abstract", "# References"])) == ""
+
+
+def test_extract_doc_title_skips_generic_headings():
+    """「Abstract」等章节头被误判成顶级标题时，应跳过取下一个真实标题。"""
+    from pipeline.processor import _extract_doc_title
+
+    def mk(pages_text):
+        return [{"page": 0, "blocks": [{"original": t} for t in pages_text]}]
+
+    pages = mk(["# Abstract", "# DALK: Dual Aligned Knowledge Graphs", "# 1 Introduction"])
+    assert _extract_doc_title(pages) == "DALK: Dual Aligned Knowledge Graphs"
+    # 带编号/冒号的通用名也跳过
+    assert _extract_doc_title(mk(["# 1 Introduction", "# Results: all good"])) == "Results: all good"
+    # 全部是通用章节名 → 空串（索引回退文件名）
+    assert _extract_doc_title(mk(["# Abstract", "# References"])) == ""

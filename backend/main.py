@@ -362,6 +362,15 @@ async def api_open_doc(payload: dict):
     except Exception:
         logger.exception("重开文档失败 doc_id=%s", doc_id)
         raise HTTPException(status_code=502, detail="重开文档失败，详见后端日志")
+    # 标题提取逻辑升级后（如跳过 "Abstract" 章节头），重开时顺手把
+    # 索引里的旧标题回写成新值——旧记录无需重翻即自动修正
+    new_title = (result.get("doc_title") or "").strip()
+    if new_title and new_title != doc.get("title"):
+        try:
+            docs_index.upsert_doc(settings.data_dir, {**doc, "title": new_title})
+            doc["title"] = new_title
+        except Exception as e:
+            logger.warning("索引标题回写失败 doc_id=%s: %s", doc_id, e)
     return {**result, "doc": doc}
 
 

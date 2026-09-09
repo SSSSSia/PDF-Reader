@@ -276,13 +276,37 @@ async def _translate_figure_block(original_md: str, file_path: str, t_cfg: dict)
     return None
 
 
+# 通用章节名（不区分大小写）：标题提取时跳过，防止「Abstract」这类
+# 被 pymupdf4llm 误判成顶级标题的章节头混进文档标题（2026-09-09 用户反馈）
+_GENERIC_HEADINGS = {
+    "abstract", "summary", "keywords", "introduction", "related work",
+    "background", "motivation", "preliminaries", "methods", "methodology",
+    "method", "approach", "experiments", "experimental setup", "results",
+    "evaluation", "discussion", "conclusion", "conclusions", "future work",
+    "references", "acknowledgments", "acknowledgements", "appendix",
+    "contributions", "overview", "contents", "摘要", "关键词", "引言",
+    "背景", "方法", "实验", "结果", "讨论", "结论", "参考文献", "附录", "目录",
+}
+
+
 def _extract_doc_title(pages: list) -> str:
-    """论文标题 = 首个 # 标题块文本（管线与缓存重建共用，阶段6-T3）。"""
+    """论文标题 = 首个非通用章节名的 # 标题块（管线与缓存重建共用）。
+
+    去编号/冒号/强调符后小写比对通用章节名；全部命中则返回空串
+    （索引标题回退源文件名）。
+    """
     for page in pages:
         for block in page["blocks"]:
             m = re.match(r"^#\s+(.{4,120})$", (block.get("original") or "").strip())
-            if m:
-                return m.group(1).strip()
+            if not m:
+                continue
+            text = m.group(1).strip()
+            norm = text.replace("*", "").replace("_", "").strip()
+            norm = norm.rstrip(":：").strip()
+            norm = re.sub(r"^\d+(\.\d+)*\s+", "", norm).lower()
+            if norm in _GENERIC_HEADINGS:
+                continue
+            return text
     return ""
 
 

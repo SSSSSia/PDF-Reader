@@ -3,6 +3,7 @@ import * as pdfjsLib from "pdfjs-dist";
 // Vite 把 worker 作为本地资源打包（与 usePdfThumbnails 同一约定；重复赋值 workerSrc 幂等）
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { usePdfStore } from "../stores/pdfStore";
+import { useUiStore } from "../stores/uiStore";
 import { convertFileSrc } from "../lib/bridge";
 import MarkdownText from "./common/MarkdownText";
 import BlockTranslateButton from "./common/BlockTranslateButton";
@@ -33,9 +34,13 @@ type PageLayout = { scale: number; w: number; h: number };
 export default function OriginalReader() {
   const filePath = usePdfStore((s) => s.filePath);
   const pages = usePdfStore((s) => s.pages);
+  // 阶段7-T1：zoom 收敛到 uiStore 全局缩放（三形态共用 + localStorage 持久化；
+  // Ctrl+滚轮由阅读页根容器的 useZoomWheel 驱动，这里只保留 ± 按钮）。
+  // 范围统一 0.7–2.0、步进 0.1（原 0.5–3/0.15 与其他形态不一致）。
+  const zoom = useUiStore((s) => s.zoom);
+  const stepZoomUi = useUiStore((s) => s.stepZoom);
   const [pdf, setPdf] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(1);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [wrapW, setWrapW] = useState(0);
 
@@ -79,8 +84,7 @@ export default function OriginalReader() {
     return () => ro.disconnect();
   }, []);
 
-  const stepZoom = (d: number) =>
-    setZoom((z) => Math.min(3, Math.max(0.5, Math.round((z + d) * 100) / 100)));
+  const stepZoom = (d: number) => stepZoomUi(d);
 
   // 每页 overlay 分段索引：一个逻辑块可有多段坐标（断栏/跨页合并），
   // 跨页合并块的分段按 seg.page 挂到各自所在页（含续文页）
@@ -113,8 +117,8 @@ export default function OriginalReader() {
       {/* 缩放控制（吸顶悬浮） */}
       <div className="sticky top-2 z-20 mx-auto flex w-max items-center gap-2 rounded-lg border border-slate-300 bg-white/95 px-2 py-1 text-xs shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95">
         <button
-          onClick={() => stepZoom(-0.15)}
-          className="h-6 w-6 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+          onClick={() => stepZoom(-0.1)}
+          className="h-6 w-6 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
           aria-label="缩小"
         >
           −
@@ -123,8 +127,8 @@ export default function OriginalReader() {
           {Math.round(zoom * 100)}%
         </span>
         <button
-          onClick={() => stepZoom(0.15)}
-          className="h-6 w-6 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+          onClick={() => stepZoom(0.1)}
+          className="h-6 w-6 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
           aria-label="放大"
         >
           +

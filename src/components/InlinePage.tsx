@@ -1,6 +1,8 @@
+import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
+import { useZoomWheel } from "../hooks/useZoomWheel";
 import MarkdownText from "./common/MarkdownText";
 import TranslatableImage from "./common/TranslatableImage";
 import BlockTranslateButton from "./common/BlockTranslateButton";
@@ -13,6 +15,8 @@ import OriginalReader from "./OriginalReader";
  * 紧跟模式：整篇连续文档流（无分页，对标 Scholaread，用户决策 2026-09-06）——
  * 原文段落在上，译文紧贴其下，段落间虚线分隔，图片/表格按原文档顺序穿插。
  * content-visibility:auto 保证长文档滚动性能。
+ * 阶段7-T1：根容器挂 Ctrl+滚轮全局缩放（hook），内容区经 --reader-zoom
+ * 缩放 prose 根字号（工具栏/页签为 chrome 不缩放；原版分支由 pdfjs scale 走）。
  */
 /** 纯图片块（markdown 图片引用），不与译文配对，整块原样展示 */
 const isPureImage = (t: string) => /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(t);
@@ -20,6 +24,8 @@ const isPureImage = (t: string) => /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(t);
 export default function InlinePage() {
   const { pages, isLoading, progress, error } = usePdfStore();
   const readerMode = useUiStore((s) => s.readerMode);
+  const zoom = useUiStore((s) => s.zoom);
+  const zoomRef = useZoomWheel<HTMLDivElement>();
   const blocks = pages.flatMap((p) => p.blocks);
 
   if (blocks.length === 0) {
@@ -42,7 +48,7 @@ export default function InlinePage() {
   }
 
   return (
-    <div>
+    <div ref={zoomRef}>
       <ReaderToolbar />
       <ReaderTabs />
 
@@ -80,7 +86,10 @@ export default function InlinePage() {
       ) : (
       /* 整篇连续文档流：所有页的 block 按文档顺序排布 */
       <div className="h-[calc(100vh-170px)] overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-2 pb-16">
+        <div
+          className="mx-auto max-w-4xl px-2 pb-16"
+          style={{ "--reader-zoom": zoom } as CSSProperties}
+        >
           {blocks.map((b) => (
             <div
               key={`${b.page}-${b.block_id}`}

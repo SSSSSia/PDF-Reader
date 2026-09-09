@@ -1,6 +1,8 @@
+import type { CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
+import { useZoomWheel } from "../hooks/useZoomWheel";
 import MarkdownText from "./common/MarkdownText";
 import TranslatableImage from "./common/TranslatableImage";
 import BlockTranslateButton from "./common/BlockTranslateButton";
@@ -15,10 +17,14 @@ import OriginalReader from "./OriginalReader";
  * DOM 结构保证左右严格同行（阶段3-T1 提前落地），滚动天然同步，
  * 不再需要旧的百分比滚动同步（useScrollSync 已退役）。
  * content-visibility:auto 让长文档只渲染视口附近内容，滚动性能不随页数劣化。
+ * 阶段7-T1：根容器挂 Ctrl+滚轮全局缩放（hook），内容区经 --reader-zoom
+ * 缩放 prose 根字号（工具栏/页签为 chrome 不缩放；原版分支由 pdfjs scale 走）。
  */
 export default function BilingualPage() {
   const { pages, isLoading, progress, error } = usePdfStore();
   const readerMode = useUiStore((s) => s.readerMode);
+  const zoom = useUiStore((s) => s.zoom);
+  const zoomRef = useZoomWheel<HTMLDivElement>();
   const blocks = pages.flatMap((p) => p.blocks);
 
   // 纯图片块（图表快照）：后端已令译文=原文，前端整行居中渲染一次
@@ -44,7 +50,7 @@ export default function BilingualPage() {
   }
 
   return (
-    <div>
+    <div ref={zoomRef}>
       <ReaderToolbar />
       <ReaderTabs />
 
@@ -82,7 +88,10 @@ export default function BilingualPage() {
       ) : (
       /* 整篇单列滚动：所有页的 block 按文档顺序连续排布 */
       <div className="h-[calc(100vh-170px)] overflow-y-auto">
-        <div className="mx-auto max-w-6xl">
+        <div
+          className="mx-auto max-w-6xl"
+          style={{ "--reader-zoom": zoom } as CSSProperties}
+        >
           {/* 窄窗口降级为单列（阶段3-T1 残余）：原文在上、译文在下 */}
           <div className="sticky top-0 z-10 hidden grid-cols-2 border-b border-slate-200 bg-slate-50/95 backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95 md:grid">
             <div className="py-2 text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">

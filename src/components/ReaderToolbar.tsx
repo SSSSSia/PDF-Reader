@@ -1,18 +1,21 @@
 import { Link, useNavigate } from "react-router-dom";
-import { useUiStore } from "../stores/uiStore";
+import { useUiStore, ZOOM_MAX, ZOOM_MIN } from "../stores/uiStore";
 import { usePdfStore } from "../stores/pdfStore";
 import ExportBar from "./ExportBar";
 
 /**
- * 阅读页共享工具栏：「← 文档库」返回 + 文章标题 ｜ 阅读模式切换（分段控件）+ 导出。
+ * 阅读页共享工具栏：「← 文档库」返回 + 文章标题 ｜ 阅读模式切换（分段控件）+ 缩放 + 导出。
  * 由 BilingualPage 与 InlinePage 共用，保证两个视图工具栏完全一致。
  * 注：原 PdfViewer 页码导航已随「整篇连续滚动」改版移除（用户决策 2026-09-06）。
  * 「原版」为叠加视图（阶段5-T2/D6）：pdfjs 原样渲染当前 PDF + 块坐标译文浮层。
  * 阶段6-T3：源 PDF 缺失（从主页重开已删/移动的文档）时「原版」禁用并提示。
  * 2026-09-09 页面逻辑重规划：顶栏左侧常驻「← 文档库」返回 + 当前文章标题。
+ * 阶段7-T1：全局缩放控件（−/百分比/＋，与 Ctrl+滚轮共用 uiStore.zoom 并持久化；
+ * 点击百分比重置 100%）。三形态共用同一缩放值。
  */
 export default function ReaderToolbar() {
-  const { mode, setMode, readerMode, setReaderMode } = useUiStore();
+  const { mode, setMode, readerMode, setReaderMode, zoom, stepZoom, resetZoom } =
+    useUiStore();
   const { filePath, file } = usePdfStore();
   const navigate = useNavigate();
   const sourceMissing = !filePath;
@@ -95,6 +98,38 @@ export default function ReaderToolbar() {
             }`}
           >
             原版
+          </button>
+        </div>
+        {/* 阶段7-T1 全局缩放：三形态共用 uiStore.zoom；点击百分比重置 100% */}
+        <div
+          className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-1 py-0.5 dark:border-slate-700 dark:bg-slate-800"
+          role="group"
+          aria-label="缩放"
+        >
+          <button
+            onClick={() => stepZoom(-0.1)}
+            disabled={zoom <= ZOOM_MIN}
+            aria-label="缩小"
+            title="缩小（也可用 Ctrl+滚轮）"
+            className="h-6 w-6 rounded text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+          >
+            −
+          </button>
+          <button
+            onClick={resetZoom}
+            title="点击重置为 100%"
+            className="w-11 text-center text-xs tabular-nums text-slate-600 transition-colors duration-150 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            onClick={() => stepZoom(0.1)}
+            disabled={zoom >= ZOOM_MAX}
+            aria-label="放大"
+            title="放大（也可用 Ctrl+滚轮）"
+            className="h-6 w-6 rounded text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-40 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+          >
+            ＋
           </button>
         </div>
         <ExportBar />

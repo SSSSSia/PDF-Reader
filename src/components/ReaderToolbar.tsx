@@ -1,21 +1,23 @@
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useUiStore } from "../stores/uiStore";
 import { usePdfStore } from "../stores/pdfStore";
 import ExportBar from "./ExportBar";
 
 /**
- * 阅读页共享工具栏：阅读模式切换（分段控件）+ 导出。
+ * 阅读页共享工具栏：「← 文档库」返回 + 文章标题 ｜ 阅读模式切换（分段控件）+ 导出。
  * 由 BilingualPage 与 InlinePage 共用，保证两个视图工具栏完全一致。
  * 注：原 PdfViewer 页码导航已随「整篇连续滚动」改版移除（用户决策 2026-09-06）。
- * 「原版」为叠加视图（阶段5-T2/D6）：pdfjs 原样渲染当前 PDF + 块坐标译文浮层，
- * 进入时保持当前路由，退出（再点对照/紧跟）回到提取式视图——现有效果完整保留。
+ * 「原版」为叠加视图（阶段5-T2/D6）：pdfjs 原样渲染当前 PDF + 块坐标译文浮层。
  * 阶段6-T3：源 PDF 缺失（从主页重开已删/移动的文档）时「原版」禁用并提示。
+ * 2026-09-09 页面逻辑重规划：顶栏左侧常驻「← 文档库」返回 + 当前文章标题。
  */
 export default function ReaderToolbar() {
   const { mode, setMode, readerMode, setReaderMode } = useUiStore();
-  const filePath = usePdfStore((s) => s.filePath);
+  const { filePath, file } = usePdfStore();
   const navigate = useNavigate();
   const sourceMissing = !filePath;
+  // 文章标题：重开文档时为 doc.title，新翻译时为文件名（去 .pdf 后缀）
+  const docTitle = (file?.name ?? "").replace(/\.pdf$/i, "");
 
   // 切换模式同时跳转对应路由（两个视图各自是独立页面组件）
   const switchMode = (m: "bilingual" | "inline") => {
@@ -29,55 +31,74 @@ export default function ReaderToolbar() {
 
   return (
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div
-        className="inline-flex items-center rounded-lg bg-slate-100 p-1 dark:bg-slate-800"
-        role="tablist"
-        aria-label="阅读模式"
-      >
-        <button
-          role="tab"
-          aria-selected={!originalActive && mode === "bilingual"}
-          onClick={() => switchMode("bilingual")}
-          className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
-            !originalActive && mode === "bilingual"
-              ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
-              : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-          }`}
+      <div className="flex min-w-0 items-center gap-3">
+        <Link
+          to="/"
+          className="shrink-0 rounded-md px-2 py-1.5 text-sm font-medium text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          title="返回文档库（翻译结果保留，可直接再进入）"
         >
-          左右对照
-        </button>
-        <button
-          role="tab"
-          aria-selected={!originalActive && mode === "inline"}
-          onClick={() => switchMode("inline")}
-          className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
-            !originalActive && mode === "inline"
-              ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
-              : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-          }`}
-        >
-          紧跟模式
-        </button>
-        <button
-          role="tab"
-          aria-selected={originalActive}
-          disabled={sourceMissing}
-          title={
-            sourceMissing
-              ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
-              : "按原版排版对照译文"
-          }
-          onClick={() => setReaderMode(originalActive ? "parallel" : "original")}
-          className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
-            originalActive
-              ? "bg-white text-blue-700 shadow-sm dark:bg-slate-700 dark:text-blue-300"
-              : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-          }`}
-        >
-          原版
-        </button>
+          ← 文档库
+        </Link>
+        {docTitle && (
+          <span
+            className="min-w-0 truncate text-sm font-medium text-slate-700 dark:text-slate-300"
+            title={docTitle}
+          >
+            {docTitle}
+          </span>
+        )}
       </div>
-      <ExportBar />
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <div
+          className="inline-flex items-center rounded-lg bg-slate-100 p-1 dark:bg-slate-800"
+          role="tablist"
+          aria-label="阅读模式"
+        >
+          <button
+            role="tab"
+            aria-selected={!originalActive && mode === "bilingual"}
+            onClick={() => switchMode("bilingual")}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
+              !originalActive && mode === "bilingual"
+                ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            左右对照
+          </button>
+          <button
+            role="tab"
+            aria-selected={!originalActive && mode === "inline"}
+            onClick={() => switchMode("inline")}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
+              !originalActive && mode === "inline"
+                ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            紧跟模式
+          </button>
+          <button
+            role="tab"
+            aria-selected={originalActive}
+            disabled={sourceMissing}
+            title={
+              sourceMissing
+                ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
+                : "按原版排版对照译文"
+            }
+            onClick={() => setReaderMode(originalActive ? "parallel" : "original")}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
+              originalActive
+                ? "bg-white text-blue-700 shadow-sm dark:bg-slate-700 dark:text-blue-300"
+                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            原版
+          </button>
+        </div>
+        <ExportBar />
+      </div>
     </div>
   );
 }

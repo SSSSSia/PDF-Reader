@@ -7,6 +7,13 @@ import { openFileDialog, uploadFile, isTauri, listDocs, openDoc } from "../lib/b
 import type { DocMeta } from "../types";
 import LoadingSpinner from "./common/LoadingSpinner";
 
+/**
+ * 文档库（主页，2026-09-09 页面逻辑重规划）：
+ * - 已翻译文章卡片列表为主体；「+ 翻译新文档」按钮 + 整页拖拽为入口；
+ * - 首次使用（列表为空）显示虚线拖拽区作主视觉，有文章后收起；
+ * - 翻译进度内联显示（返回文档库不中断），OCR 完成自动进入阅读页；
+ * - 点击文章：内存有该篇结果直接恢复，否则缓存重建秒开（不重跑管线）。
+ */
 export default function MainPage() {
   const {
     setFile,
@@ -28,11 +35,10 @@ export default function MainPage() {
   // 阶段1-T2：跳转时机由「全部翻译完成」提前到「pages 就绪（OCR 完成）」。
   // 用 ref 保证同一文件只跳一次；处理新文件时重置。
   const navigatedRef = useRef(false);
-  // 阶段6-T3：主页"已翻译文章"列表（持久化文档索引）
   const [docs, setDocs] = useState<DocMeta[] | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
 
-  // 首次进入主页拉取列表；从阅读页返回时刷新（可能刚翻完新文档）
+  // 首次进入主页拉取列表；从阅读页返回时重挂载自动刷新（可能刚翻完新文档）
   useEffect(() => {
     listDocs()
       .then(setDocs)
@@ -47,7 +53,7 @@ export default function MainPage() {
     }
   }, [pages, mode, navigate]);
 
-  // Tauri 环境下监听 OS 文件拖拽（HTML5 drop 在 Tauri 中会被拦截，需走 webview 事件）
+  // Tauri 环境下监听 OS 文件拖拽（整页生效；HTML5 drop 在 Tauri 中会被拦截）
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     if ("__TAURI_INTERNALS__" in window) {
@@ -97,9 +103,35 @@ export default function MainPage() {
     void processFile(selected);
   };
 
-  /** 打开已翻译文章（阶段6-T3）：缓存重建秒开，不重跑管线 */
+  const handleBrowse = async () => {
+    const selected = await openFileDialog();
+    if (!selected) return;
+    await handlePath(selected);
+  };
+
+  // 浏览器模式下 HTML5 拖拽（整页容器接收；Tauri 模式走 webview 事件，这里跳过）
+  const handleDrop = async (e: React.DragEvent) => {
+    if (isTauri()) return;
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf")) return;
+    const path = await uploadFile(file);
+    if (path) await handlePath(path);
+  };
+
+  /** 打开已翻译文章：内存有该篇结果直接恢复；否则缓存重建秒开（阶段6-T3） */
   const handleOpenDoc = async (doc: DocMeta) => {
     if (openingId) return;
+    // 内存命中：当前 pdfStore 装的就是这一篇（路径一致且有内容），直接回阅读页。
+    // file 以 as any 存入（含 path 字段，见 handlePath），此处同样取扩展字段。
+    const currentPath = (file as { path?: string } | null)?.path;
+    if (pages.length > 0 && currentPath && currentPath === doc.file_path) {
+      navigatedRef.current = true;
+      navigate(mode === "inline" ? "/reader/inline" : "/reader/bilingual");
+      return;
+    }
     setOpeningId(doc.doc_id);
     setError(null);
     try {
@@ -124,122 +156,110 @@ export default function MainPage() {
     }
   };
 
-  const handleBrowse = async () => {
-    const selected = await openFileDialog();
-    if (!selected) return;
-    await handlePath(selected);
-  };
-
-  // 浏览器模式下 HTML5 拖拽（Tauri 模式走 webview 的 onDragDropEvent，这里跳过）
-  const handleDrop = async (e: React.DragEvent) => {
-    if (isTauri()) return;
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".pdf")) return;
-    const path = await uploadFile(file);
-    if (path) await handlePath(path);
-  };
+  const hasDocs = (docs?.length ?? 0) > 0;
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[60vh]">
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label="选择或拖入 PDF 文件"
-        onClick={handleBrowse}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleBrowse();
-          }
-        }}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
-        className={`w-full max-w-lg rounded-xl border-2 p-6 text-center transition-colors duration-150 cursor-pointer sm:p-10 ${
-          isDragging
-            ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-            : "border-dashed border-slate-300 hover:border-blue-400 hover:bg-white dark:border-slate-600 dark:hover:border-blue-500 dark:hover:bg-slate-800"
-        }`}
-      >
-        <div className="mb-3 text-5xl" aria-hidden="true">
-          {isDragging ? "📂" : "📄"}
-        </div>
-        <h2 className="mb-1.5 text-lg font-semibold text-slate-900 dark:text-slate-100">
-          {isDragging ? "松开以加载 PDF" : "点击选择或拖入 PDF 文件"}
-        </h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          识别完成后自动进入阅读，译文边译边显示
-        </p>
+    <div
+      className="mx-auto max-w-2xl"
+      onDragOver={(e) => {
+        if (isTauri()) return;
+        e.preventDefault();
+        setIsDragging(true);
+      }}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={handleDrop}
+    >
+      {/* 页头：文档库标题 + 唯一主操作「翻译新文档」 */}
+      <div className="mb-5 flex items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+          文档库
+          {docs !== null && docs.length > 0 && (
+            <span className="ml-2 text-sm font-normal text-slate-400 dark:text-slate-500">
+              {docs.length} 篇
+            </span>
+          )}
+        </h1>
+        <button onClick={handleBrowse} className="btn-primary shrink-0">
+          + 翻译新文档
+        </button>
       </div>
 
-      {/* 阶段6-T3：已翻译文章列表（持久化索引，点击缓存重建秒开）。
-          空列表也显示区块 + 引导（2026-09-09 用户反馈：完全隐藏看起来像功能没生效） */}
-      {docs !== null && (
-        <div className="mt-8 w-full max-w-lg animate-fade-in">
-          <h2 className="mb-2.5 text-sm font-semibold text-slate-500 dark:text-slate-400">
-            已翻译文章{docs.length > 0 ? `（${docs.length}）` : ""}
+      {/* 列表为空：虚线拖拽区作首用主视觉；拖拽悬停整页高亮 */}
+      {docs !== null && !hasDocs && (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="选择或拖入 PDF 文件"
+          onClick={handleBrowse}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleBrowse();
+            }
+          }}
+          className={`rounded-xl border-2 p-6 text-center transition-colors duration-150 cursor-pointer sm:p-10 ${
+            isDragging
+              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+              : "border-dashed border-slate-300 hover:border-blue-400 hover:bg-white dark:border-slate-600 dark:hover:border-blue-500 dark:hover:bg-slate-800"
+          }`}
+        >
+          <div className="mb-3 text-5xl" aria-hidden="true">
+            {isDragging ? "📂" : "📄"}
+          </div>
+          <h2 className="mb-1.5 text-lg font-semibold text-slate-900 dark:text-slate-100">
+            {isDragging ? "松开以加载 PDF" : "点击选择或拖入 PDF 文件"}
           </h2>
-          {docs.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-500 dark:border-slate-600 dark:text-slate-400">
-              暂无翻译记录——翻译第一篇论文后会列在这里，点击即可秒开重读。
-              此前翻译过的旧文档需重新翻译一次才会收录（缓存全命中，秒级完成、零
-              API 消耗）。
-            </p>
-          ) : (
-            <ul className="space-y-2">
-            {docs.map((d) => (
-              <li key={d.doc_id}>
-                <button
-                  onClick={() => handleOpenDoc(d)}
-                  disabled={openingId !== null}
-                  title={
-                    d.file_exists === false
-                      ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
-                      : "打开已翻译内容（秒开，不重新翻译）"
-                  }
-                  className="card w-full px-4 py-3 text-left transition-colors duration-150 hover:border-blue-400 disabled:cursor-wait disabled:opacity-60 dark:hover:border-blue-500"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900 dark:text-slate-100">
-                      {d.title}
-                    </span>
-                    {d.file_exists === false && (
-                      <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                        源文件缺失
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                    {d.translated_at} · {d.page_count} 页
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-            )}
-        </div>
-      )}
-
-      {openingId && (
-        <div className="mt-4 w-full max-w-lg animate-fade-in">
-          <LoadingSpinner text="正在打开…" />
-        </div>
-      )}
-
-      {file && (
-        <div className="card mt-4 w-full max-w-lg px-4 py-3 animate-fade-in">
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            已选择:{" "}
-            <span className="font-medium text-slate-800 dark:text-slate-200">
-              {file.name}
-            </span>
+            识别完成后自动进入阅读，译文边译边显示
           </p>
         </div>
       )}
 
+      {/* 已翻译文章卡片列表（阶段6-T3；2026-09-09 定稿卡片式） */}
+      {docs !== null && hasDocs && (
+        <ul className="space-y-3">
+          {docs.map((d) => (
+            <li key={d.doc_id}>
+              <button
+                onClick={() => handleOpenDoc(d)}
+                disabled={openingId !== null}
+                title={
+                  d.file_exists === false
+                    ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
+                    : "打开已翻译内容（秒开，不重新翻译）"
+                }
+                className="card w-full px-4 py-3.5 text-left transition-colors duration-150 hover:border-blue-400 disabled:cursor-wait disabled:opacity-60 dark:hover:border-blue-500"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                    {d.title}
+                  </span>
+                  {d.file_exists === false && (
+                    <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                      源文件缺失
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  {d.translated_at} · {d.page_count} 页
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {docs === null && <LoadingSpinner text="加载文档库…" />}
+
+      {openingId && (
+        <div className="mt-4 animate-fade-in">
+          <LoadingSpinner text="正在打开…" />
+        </div>
+      )}
+
+      {/* 翻译进行中：内联进度（返回文档库也不中断，OCR 完成自动进阅读页） */}
       {isLoading && (
-        <div className="mt-4 w-full max-w-lg animate-fade-in">
+        <div className="mt-4 animate-fade-in">
           <LoadingSpinner text={`正在识别与翻译… ${Math.round(progress)}%`} />
           <div
             role="progressbar"
@@ -257,10 +277,21 @@ export default function MainPage() {
         </div>
       )}
 
+      {file && !isLoading && pages.length === 0 && !error && (
+        <div className="card mt-4 px-4 py-3 animate-fade-in">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            已选择:{" "}
+            <span className="font-medium text-slate-800 dark:text-slate-200">
+              {file.name}
+            </span>
+          </p>
+        </div>
+      )}
+
       {error && (
         <div
           role="alert"
-          className="mt-4 w-full max-w-lg rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800/60 dark:bg-red-900/20 animate-fade-in"
+          className="mt-4 rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-800/60 dark:bg-red-900/20 animate-fade-in"
         >
           <p className="text-sm text-red-700 dark:text-red-300">
             {String(error)}

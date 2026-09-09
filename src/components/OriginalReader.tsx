@@ -35,10 +35,10 @@ export default function OriginalReader() {
   const filePath = usePdfStore((s) => s.filePath);
   const pages = usePdfStore((s) => s.pages);
   // 阶段7-T1：zoom 收敛到 uiStore 全局缩放（三形态共用 + localStorage 持久化；
-  // Ctrl+滚轮由阅读页根容器的 useZoomWheel 驱动，这里只保留 ± 按钮）。
+  // Ctrl+滚轮由阅读页根容器的 useZoomWheel 驱动，± 控件统一在工具栏，
+  // 此处不再放重复控件——2026-09-09 用户反馈两处缩放计数重复）。
   // 范围统一 0.7–2.0、步进 0.1（原 0.5–3/0.15 与其他形态不一致）。
   const zoom = useUiStore((s) => s.zoom);
-  const stepZoomUi = useUiStore((s) => s.stepZoom);
   const [pdf, setPdf] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -84,8 +84,6 @@ export default function OriginalReader() {
     return () => ro.disconnect();
   }, []);
 
-  const stepZoom = (d: number) => stepZoomUi(d);
-
   // 每页 overlay 分段索引：一个逻辑块可有多段坐标（断栏/跨页合并），
   // 跨页合并块的分段按 seg.page 挂到各自所在页（含续文页）
   const overlaysByPage = useMemo(() => {
@@ -114,28 +112,10 @@ export default function OriginalReader() {
       ref={wrapRef}
       className="relative h-[calc(100vh-170px)] overflow-auto bg-slate-200 dark:bg-slate-950"
     >
-      {/* 缩放控制（吸顶吸附左上：横向滚动（放大超宽）时也保持可见） */}
-      <div className="sticky left-2 top-2 z-20 flex w-max items-center gap-2 rounded-lg border border-slate-300 bg-white/95 px-2 py-1 text-xs shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95">
-        <button
-          onClick={() => stepZoom(-0.1)}
-          className="h-6 w-6 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-          aria-label="缩小"
-        >
-          −
-        </button>
-        <span className="w-10 text-center tabular-nums text-slate-600 dark:text-slate-300">
-          {Math.round(zoom * 100)}%
-        </span>
-        <button
-          onClick={() => stepZoom(0.1)}
-          className="h-6 w-6 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-          aria-label="放大"
-        >
-          +
-        </button>
-        <span className="hidden text-slate-400 sm:inline dark:text-slate-500">
-          点高亮块看译文
-        </span>
+      {/* 缩放走工具栏统一控件（阶段7-T1）：此处不再放重复的 ± 控件。
+          「点高亮块看译文」操作提示保留为纯文字小条。 */}
+      <div className="sticky left-2 top-2 z-20 w-max rounded-lg border border-slate-300 bg-white/95 px-2 py-1 text-xs text-slate-400 shadow-sm backdrop-blur-sm dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-500">
+        点高亮块看译文 · 缩放用上方控件或 Ctrl+滚轮
       </div>
 
       {error && (
@@ -153,7 +133,15 @@ export default function OriginalReader() {
       )}
 
       {pdf && (
-        <div className="mx-auto w-full max-w-4xl px-4 pb-16 pt-3">
+        /* 页面列容器显式宽度 = fit-width × zoom（每页 CSS 宽度公式相同，
+           可直接算出，不必等懒渲染）——滚动区域宽度由显式宽度决定，
+           放大超宽时横向滚动必然可用（2026-09-09 用户反馈：溢出传播
+           在 w-full/max-w 容器链上不可靠，右侧被裁且无法滚动）。
+           zoom=1 时宽 = wrapW-16 < 容器宽，居中且完整显示。 */
+        <div
+          className="mx-auto px-4 pb-16 pt-3"
+          style={{ width: wrapW > 0 ? (wrapW - 48) * zoom + 32 : undefined }}
+        >
           {pages.map((p) => (
             <OriginalPage
               key={p.page}

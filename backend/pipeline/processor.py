@@ -109,6 +109,15 @@ async def run_pipeline(file_path: str) -> dict:
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"文件不存在: {file_path}")
 
+    # 无 Key fail-fast（2026-09-09 用户问询"默认没配 Key 有没有异常处理"）：
+    # 缺任一 Key 直接拒绝启动，不让任务跑起来再失败——管线各环节的
+    # per-block 容错（_translate_chunk 减半重试/单段落空、figtranslate
+    # 保留原文）会把异常吞成空译文，表现为"翻译完成却没有译文"的静默错误。
+    if not (settings.ocr_config.get("api_key") or "").strip():
+        raise ValueError("OCR API Key 未配置，请先在设置中配置后再翻译")
+    if not (settings.translate_config.get("api_key") or "").strip():
+        raise ValueError("翻译 API Key 未配置，请先在设置中配置后再翻译")
+
     _evict_jobs()
 
     pdf_hash = file_hash(file_path)

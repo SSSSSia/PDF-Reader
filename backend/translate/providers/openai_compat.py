@@ -131,7 +131,11 @@ class OpenAICompatProvider(BaseTranslator):
         model = config.get("model", "deepseek-ai/DeepSeek-V4-Flash")
 
         if not api_key:
-            return ""
+            # 无 Key 显式报错（2026-09-09）：旧版静默 return ""，单块重翻
+            # 失败只表现为按钮变"重试"，用户无从得知是 Key 问题。全文管线
+            # 由 run_pipeline 入口 fail-fast 拦截，此处兜底单块直调路径
+            # （/api/block/translate 会转成 502 "翻译失败: …" 返回前端）。
+            raise ValueError("翻译 API Key 未配置")
 
         payload = {
             "model": model,

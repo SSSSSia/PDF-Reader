@@ -50,9 +50,11 @@ export default function BlockTranslateButton({ block }: { block: TextBlock }) {
   const disabled = isLoading || state === "busy";
   const title = isLoading
     ? "全文翻译进行中，请稍后再试"
-    : block.translated
-      ? "重新翻译此段"
-      : "翻译此段";
+    : state === "err"
+      ? "翻译失败：请检查 API Key 配置或网络后重试"
+      : block.translated
+        ? "重新翻译此段"
+        : "翻译此段";
 
   return (
     <button

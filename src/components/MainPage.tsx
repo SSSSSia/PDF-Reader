@@ -4,6 +4,7 @@ import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
 import { useLibraryStore } from "../stores/libraryStore";
 import { useSessionsStore } from "../stores/sessionsStore";
+import { useConfigStore } from "../stores/configStore";
 import { startTranslation, currentTranslationKey } from "../lib/translationManager";
 import { openFileDialog, uploadFile, isTauri, openDoc } from "../lib/bridge";
 import { useDocThumbnails } from "../hooks/useDocThumbnails";
@@ -92,6 +93,14 @@ export default function MainPage() {
 
   const handlePath = async (selected: string) => {
     if (!selected.toLowerCase().endsWith(".pdf")) {
+      return;
+    }
+    // 无 Key 前置拦截（2026-09-09）：configLoaded 三态防启动误报，
+    // 后端 run_pipeline 入口也会 fail-fast，这里省一次无效上传。
+    // 错误文案含"API Key"→ 下方错误卡自动出现"前往设置"引导按钮。
+    const { configLoaded, isConfigured } = useConfigStore.getState();
+    if (configLoaded && !isConfigured) {
+      setError("请先在设置中配置 API Key，再添加文章");
       return;
     }
     // 阶段8：同一时间仅 1 个翻译任务（后端支持并发，先按当前需求收口）；

@@ -64,10 +64,11 @@ def test_openai_compat_call_mocked():
     assert out == "你好世界"
 
 
-def test_openai_compat_missing_key_returns_empty():
+def test_openai_compat_missing_key_raises():
+    """无 Key 显式报错（2026-09-09）：不再静默返回空译文。"""
     cfg = {"provider": "siliconflow", "api_key": "", "api_url": "x", "model": "m"}
-    out = asyncio.run(translate_text("hello", "en", "zh", cfg))
-    assert out == ""
+    with pytest.raises(ValueError, match="翻译 API Key 未配置"):
+        asyncio.run(translate_text("hello", "en", "zh", cfg))
 
 
 def test_batch_short_circuits_empty():

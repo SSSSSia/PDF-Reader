@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { startTranslation } from "../lib/translationManager";
+import { useConfigStore } from "../stores/configStore";
 import { openFileDialog, uploadFile, isTauri } from "../lib/bridge";
 
 /**
@@ -15,8 +16,14 @@ export default function AddArticlePage() {
   const [localError, setLocalError] = useState<string | null>(null);
 
   // 交给 translationManager 启动后台翻译：成功 → 返回文档库看进度；
-  // 失败（如已有任务进行中）→ 留在本页提示原因
+  // 失败（如已有任务进行中）→ 留在本页提示原因。
+  // 无 Key 前置拦截（2026-09-09）：未配置直接提示并引导去设置，不发无效任务
   const handleFile = async (path: string) => {
+    const { configLoaded, isConfigured } = useConfigStore.getState();
+    if (configLoaded && !isConfigured) {
+      setLocalError("请先在设置中配置 API Key，再添加文章");
+      return;
+    }
     const fileName = path.split(/[\\/]/).pop() || path;
     const r = await startTranslation(path, fileName);
     if (r.ok) {
@@ -166,12 +173,20 @@ export default function AddArticlePage() {
         </div>
 
         {localError && (
-          <p
+          <div
             role="alert"
             className="mt-3 text-sm text-red-600 dark:text-red-400"
           >
-            {localError}
-          </p>
+            <p>{localError}</p>
+            {/API Key/.test(localError) && (
+              <Link
+                to="/config"
+                className="mt-1 inline-block font-medium text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+              >
+                前往设置 →
+              </Link>
+            )}
+          </div>
         )}
       </div>
     </div>

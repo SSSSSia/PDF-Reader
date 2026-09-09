@@ -51,11 +51,17 @@ export default function MainPage() {
   }, [fetchAll]);
 
   // pages 首次非空（后端 OCR 完成、progress≈30）即进入阅读页。
-  // 仅在翻译进行中（isLoading）触发：从阅读页返回文献库时 pdfStore 仍持有
-  // 上篇结果，若无条件跳转会立刻把用户弹回阅读页（2026-09-09 用户反馈的
-  // 「← 文档库返回不了主页」即此因）。
+  // 仅在翻译进行中（isLoading）且「本页挂载时 pages 为空 → 变非空」才触发：
+  // 用户在翻译途中主动回到文献库（挂载时 pages 已非空）不会被弹回阅读页
+  // （2026-09-09 用户反馈：翻译途中点文档库会一直跳回翻译页）。
+  const pagesWereEmptyRef = useRef(pages.length === 0);
   useEffect(() => {
-    if (isLoading && pages.length > 0 && !navigatedRef.current) {
+    if (
+      isLoading &&
+      pages.length > 0 &&
+      pagesWereEmptyRef.current &&
+      !navigatedRef.current
+    ) {
       navigatedRef.current = true;
       navigate(mode === "inline" ? "/reader/inline" : "/reader/bilingual");
     }
@@ -114,6 +120,7 @@ export default function MainPage() {
     // 不 await：跳转由上方 pages 就绪 effect 驱动（OCR 完成即进阅读页），
     // processFile 的轮询闭包持有 zustand setter，MainPage 卸载后仍正常回传。
     navigatedRef.current = false;
+    pagesWereEmptyRef.current = true; // 本页发起的新翻译：pages 清空后待其就绪自动跳转
     void processFile(selected);
   };
 
@@ -137,6 +144,9 @@ export default function MainPage() {
 
   /** 打开已翻译文章：内存有该篇结果直接恢复；否则缓存重建秒开（阶段6-T3） */
   const handleOpenDoc = async (doc: DocMeta) => {
+    // 翻译进行中不开新会话：管线轮询正在向同一 pdfStore 写 pages，
+    // 打开其他文献会互相覆盖（2026-09-09 用户反馈的跳转混乱同源）
+    if (usePdfStore.getState().isLoading) return;
     if (openingId) return;
     // 内存命中：当前 pdfStore 装的就是这一篇（路径一致且有内容），直接回阅读页。
     const currentPath = (file as { path?: string } | null)?.path;
@@ -291,8 +301,8 @@ export default function MainPage() {
         </div>
       )}
 
-      {/* 计数 + 搜索行 */}
-      {hasDocs && (
+      {/* 计数 + 搜索行：有文献，或文件夹视图（空文件夹也显示，避免整页空白） */}
+      {(hasDocs || (loaded && currentFolder)) && (
         <div className="mt-5 flex items-center justify-between gap-4">
           <p className="shrink-0 text-sm text-slate-500 dark:text-slate-400">
             共 {folderDocs.length} 篇文献
@@ -370,9 +380,11 @@ export default function MainPage() {
                   }
                 }}
                 title={
-                  d.file_exists === false
-                    ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
-                    : "打开已翻译内容（秒开，不重新翻译）"
+                  isLoading
+                    ? "翻译进行中，完成后即可打开文献"
+                    : d.file_exists === false
+                      ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
+                      : "打开已翻译内容（秒开，不重新翻译）"
                 }
                 className={`card h-full cursor-pointer p-3 transition-colors duration-150 hover:border-slate-400 dark:hover:border-slate-500 ${
                   openingId ? "cursor-wait opacity-60" : ""
@@ -501,6 +513,30 @@ export default function MainPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {/* 空文件夹：虚线空态提示（计数/搜索行已在上方显示） */}
+      {loaded && currentFolder && !hasDocs && (
+        <div className="mt-6 flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 px-6 py-14 text-center dark:border-slate-600">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-10 w-10 text-slate-300 dark:text-slate-600"
+            aria-hidden="true"
+          >
+            <path d="M4 5h5l2 2.5h9V19a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 19V6.5A1.5 1.5 0 0 1 4.5 5z" />
+          </svg>
+          <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+            该文件夹暂无文献
+          </p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            在文献库中点击卡片右上角「⋯」即可将文献移入
+          </p>
+        </div>
       )}
 
       {/* 搜索/过滤无结果 */}

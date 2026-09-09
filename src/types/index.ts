@@ -79,6 +79,21 @@ export interface DocMeta {
   status: string;
   /** 后端实时探测：源 PDF 是否仍在原路径（缺失时原版模式禁用） */
   file_exists?: boolean;
+  /** 归档文件夹（null/缺省 = 未分类；侧边栏文件夹分组用） */
+  folder_id?: string | null;
+}
+
+/** 文件夹（2026-09-09 靠岸学术风格改版）：侧边栏分组，folders.json 持久化 */
+export interface FolderMeta {
+  folder_id: string;
+  name: string;
+  created_at: string;
+}
+
+/** GET /api/docs 返回：文档列表 + 文件夹列表 */
+export interface LibraryData {
+  docs: DocMeta[];
+  folders: FolderMeta[];
 }
 
 /** POST /api/docs/open 返回：缓存重建的已翻译会话 */

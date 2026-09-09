@@ -45,6 +45,7 @@ function App() {
         <Routes>
           <Route path="/" element={<MainPage />} />
           <Route path="/add" element={<AddArticlePage />} />
+          <Route path="/folder/:folderId" element={<MainPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route
             path="/reader/bilingual"

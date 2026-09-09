@@ -13,7 +13,7 @@
  */
 import { invoke, convertFileSrc as tauriConvertFileSrc } from "@tauri-apps/api/core";
 import { open as tauriOpen } from "@tauri-apps/plugin-dialog";
-import type { DocMeta, OpenDocResult } from "../types";
+import type { DocMeta, FolderMeta, LibraryData, OpenDocResult } from "../types";
 
 const API_BASE = "http://localhost:8000";
 
@@ -105,9 +105,43 @@ export async function recognizeBlockFormula(
  * 主页"已翻译文章"列表（阶段6-T3）：读后端持久化文档索引。
  * Tauri/浏览器双模都直连本地后端（索引只在后端，无需走 Rust 命令）。
  */
-export async function listDocs(): Promise<DocMeta[]> {
-  const data = (await apiFetch(`${API_BASE}/api/docs`)) as { docs: DocMeta[] };
-  return data.docs ?? [];
+export async function listDocs(): Promise<LibraryData> {
+  const data = (await apiFetch(`${API_BASE}/api/docs`)) as Partial<LibraryData>;
+  return { docs: data.docs ?? [], folders: data.folders ?? [] };
+}
+
+/** POST JSON 的小助手（文件夹管理等简单写操作共用） */
+async function postJson(url: string, body: unknown): Promise<void> {
+  await apiFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** 新建文件夹（2026-09-09 靠岸学术风格：侧边栏分组） */
+export async function createFolder(name: string): Promise<FolderMeta> {
+  const data = (await apiFetch(`${API_BASE}/api/folders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  })) as { folder: FolderMeta };
+  return data.folder;
+}
+
+/** 重命名文件夹 */
+export async function renameFolder(folderId: string, name: string): Promise<void> {
+  await postJson(`${API_BASE}/api/folders/rename`, { folder_id: folderId, name });
+}
+
+/** 删除文件夹（其中文档自动回到未分类） */
+export async function deleteFolder(folderId: string): Promise<void> {
+  await postJson(`${API_BASE}/api/folders/delete`, { folder_id: folderId });
+}
+
+/** 移动文档到文件夹（folderId=null 表示移出归未分类） */
+export async function moveDoc(docId: string, folderId: string | null): Promise<void> {
+  await postJson(`${API_BASE}/api/docs/move`, { doc_id: docId, folder_id: folderId });
 }
 
 /**

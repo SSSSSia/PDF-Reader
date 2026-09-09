@@ -1,21 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
+import { useLibraryStore } from "../stores/libraryStore";
 import { useOcr } from "../hooks/useOcr";
-import { openFileDialog, uploadFile, isTauri, listDocs, openDoc } from "../lib/bridge";
+import { openFileDialog, uploadFile, isTauri, openDoc } from "../lib/bridge";
 import { useDocThumbnails } from "../hooks/useDocThumbnails";
 import type { DocMeta } from "../types";
 import LoadingSpinner from "./common/LoadingSpinner";
 
 /**
- * 文献库（主页，2026-09-09 靠岸学术风格改版）：
- * - 页头「文献库 + 添加文章按钮」；计数/搜索行；3 列首页缩略图卡片网格；
- * - 空状态保留整块拖拽上传区（老入口不丢弃）；
- * - 有文献时仍支持整页拖入 PDF（Tauri 原生事件 / 浏览器 HTML5 drop）；
+ * 文献库（主页 + 文件夹视图，2026-09-09 靠岸学术风格一比一复刻）：
+ * - 左侧边栏（Layout/Sidebar）负责导航与文件夹分组，本页负责网格内容；
+ * - /folder/:folderId 进入文件夹视图（标题为文件夹名，仅显示归档文献）；
+ * - 卡片：小尺寸居中首页缩略图 + 两行标题 + 元信息，hover 出「⋯」移动菜单；
+ * - 空状态保留整块拖拽上传区；有文献后仍支持整页拖入 PDF；
  * - 翻译进度内联显示，OCR 完成自动进入阅读页；点击卡片缓存秒开。
  */
 export default function MainPage() {
+  const { folderId } = useParams();
   const {
     setFile,
     setFilePath,
@@ -30,23 +33,22 @@ export default function MainPage() {
     setPages,
   } = usePdfStore();
   const { mode } = useUiStore();
+  const { docs, folders, loaded, fetchAll, moveDoc } = useLibraryStore();
   const { processFile } = useOcr();
   const navigate = useNavigate();
   const [isDragging, setIsDragging] = useState(false);
   // 阶段1-T2：跳转时机由「全部翻译完成」提前到「pages 就绪（OCR 完成）」。
   // 用 ref 保证同一文件只跳一次；处理新文件时重置。
   const navigatedRef = useRef(false);
-  const [docs, setDocs] = useState<DocMeta[] | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // 「移动到文件夹」菜单当前展开的文档（null = 关闭）
+  const [menuDoc, setMenuDoc] = useState<DocMeta | null>(null);
   const thumbs = useDocThumbnails(docs);
 
-  // 首次进入主页拉取列表；从阅读页返回时重挂载自动刷新（可能刚翻完新文档）
   useEffect(() => {
-    listDocs()
-      .then(setDocs)
-      .catch(() => setDocs([]));
-  }, []);
+    void fetchAll();
+  }, [fetchAll]);
 
   // pages 首次非空（后端 OCR 完成、progress≈30）即进入阅读页。
   // 仅在翻译进行中（isLoading）触发：从阅读页返回文献库时 pdfStore 仍持有
@@ -144,6 +146,7 @@ export default function MainPage() {
       return;
     }
     setOpeningId(doc.doc_id);
+    setMenuDoc(null);
     setError(null);
     try {
       const r = await openDoc(doc.doc_id);
@@ -167,12 +170,22 @@ export default function MainPage() {
     }
   };
 
-  const hasDocs = (docs?.length ?? 0) > 0;
+  const currentFolder = folderId
+    ? folders.find((f) => f.folder_id === folderId)
+    : undefined;
+
+  const folderDocs = useMemo(
+    () =>
+      folderId ? docs.filter((d) => d.folder_id === folderId) : docs,
+    [docs, folderId],
+  );
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return docs ?? [];
-    return (docs ?? []).filter((d) => d.title.toLowerCase().includes(q));
-  }, [docs, query]);
+    if (!q) return folderDocs;
+    return folderDocs.filter((d) => d.title.toLowerCase().includes(q));
+  }, [folderDocs, query]);
+
+  const hasDocs = folderDocs.length > 0;
 
   return (
     <div
@@ -194,10 +207,10 @@ export default function MainPage() {
         </div>
       )}
 
-      {/* 页头：标题 + 添加文章按钮（靠岸学术式右置主操作） */}
+      {/* 页头：标题 + 添加文章按钮 */}
       <header className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-          文献库
+          {currentFolder ? currentFolder.name : "文献库"}
         </h1>
         <button
           onClick={() => navigate("/add")}
@@ -218,8 +231,13 @@ export default function MainPage() {
         </button>
       </header>
 
-      {/* 空状态：整块拖拽上传区作主视觉（入口不丢弃） */}
-      {docs !== null && !hasDocs && (
+      {/* 空状态：整块拖拽上传区作主视觉（入口不丢弃）；文件夹不存在单独提示 */}
+      {loaded && folderId && !currentFolder && (
+        <p className="mt-10 text-center text-sm text-slate-500 dark:text-slate-400">
+          该文件夹不存在或已被删除。
+        </p>
+      )}
+      {loaded && !folderId && !hasDocs && (
         <div
           role="button"
           tabIndex={0}
@@ -267,7 +285,7 @@ export default function MainPage() {
         </div>
       )}
 
-      {docs === null && (
+      {!loaded && (
         <div className="mt-8">
           <LoadingSpinner text="加载文献库…" />
         </div>
@@ -277,7 +295,7 @@ export default function MainPage() {
       {hasDocs && (
         <div className="mt-5 flex items-center justify-between gap-4">
           <p className="shrink-0 text-sm text-slate-500 dark:text-slate-400">
-            {docs === null ? "…" : `共 ${docs.length} 篇文献`}
+            共 {folderDocs.length} 篇文献
           </p>
           <div className="relative w-56 sm:w-64">
             <svg
@@ -335,32 +353,42 @@ export default function MainPage() {
         </div>
       )}
 
-      {/* 已翻译文献：3 列首页缩略图卡片网格 */}
+      {/* 文献网格：小尺寸居中首页缩略图卡片（3 列） */}
       {hasDocs && filtered.length > 0 && (
         <ul className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((d) => (
-            <li key={d.doc_id}>
-              <button
-                onClick={() => handleOpenDoc(d)}
-                disabled={openingId !== null}
+            <li key={d.doc_id} className="group relative">
+              {/* 卡片主体（div+role：内部还要放「⋯」按钮，避免 button 嵌套） */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => void handleOpenDoc(d)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    void handleOpenDoc(d);
+                  }
+                }}
                 title={
                   d.file_exists === false
                     ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
                     : "打开已翻译内容（秒开，不重新翻译）"
                 }
-                className="card group block w-full overflow-hidden text-left transition-colors duration-150 hover:border-slate-400 disabled:cursor-wait disabled:opacity-60 dark:hover:border-slate-500"
+                className={`card h-full cursor-pointer p-3 transition-colors duration-150 hover:border-slate-400 dark:hover:border-slate-500 ${
+                  openingId ? "cursor-wait opacity-60" : ""
+                }`}
               >
-                {/* 首页缩略图（A4 纵向比例；失败/缺失显示占位） */}
-                <div className="relative aspect-[3/4] w-full overflow-hidden bg-slate-100 dark:bg-slate-800">
+                {/* 缩略图：小尺寸居中（白边留白），不再整卡满铺 */}
+                <div className="flex h-44 items-center justify-center overflow-hidden rounded-lg bg-slate-100 p-3 dark:bg-slate-800">
                   {thumbs[d.doc_id] ? (
                     <img
                       src={thumbs[d.doc_id]}
                       alt=""
-                      className="h-full w-full object-cover object-top"
+                      className="max-h-full max-w-full rounded-sm object-contain shadow-sm ring-1 ring-slate-200 dark:ring-slate-700"
                       draggable={false}
                     />
                   ) : (
-                    <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-400 dark:text-slate-500">
+                    <div className="flex flex-col items-center gap-1.5 text-slate-400 dark:text-slate-500">
                       <svg
                         viewBox="0 0 24 24"
                         fill="none"
@@ -368,7 +396,7 @@ export default function MainPage() {
                         strokeWidth="1.2"
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        className="h-10 w-10"
+                        className="h-9 w-9"
                         aria-hidden="true"
                       >
                         <path d="M14.5 3H7a1.5 1.5 0 0 0-1.5 1.5v15A1.5 1.5 0 0 0 7 21h10a1.5 1.5 0 0 0 1.5-1.5V7L14.5 3z" />
@@ -379,34 +407,108 @@ export default function MainPage() {
                       </span>
                     </div>
                   )}
-                  {d.file_exists === false && thumbs[d.doc_id] && (
-                    <span className="absolute right-2 top-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
-                      源文件缺失
-                    </span>
-                  )}
                 </div>
-                {/* 标题 + 元信息 */}
-                <div className="px-3.5 py-3">
+                {/* 标题（两行截断）+ 元信息 */}
+                <div className="px-1 pb-1 pt-2.5">
                   <p
-                    className="truncate text-sm font-medium text-slate-900 dark:text-slate-100"
+                    className="line-clamp-2 min-h-[2.5em] text-sm font-medium leading-snug text-slate-900 dark:text-slate-100"
                     title={d.title}
                   >
                     {d.title}
                   </p>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  <p className="mt-1.5 text-xs text-slate-500 dark:text-slate-400">
                     {d.translated_at} · {d.page_count} 页
                   </p>
                 </div>
+              </div>
+
+              {/* 「⋯」移动到文件夹菜单（hover 显现；阻止冒泡不触发打开） */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuDoc(menuDoc?.doc_id === d.doc_id ? null : d);
+                }}
+                title="移动到文件夹"
+                aria-label={`移动 ${d.title} 到文件夹`}
+                className={`absolute right-4 top-4 z-10 rounded-md bg-white/90 p-1 text-slate-500 shadow-sm ring-1 ring-slate-200 transition-opacity duration-150 hover:text-slate-800 dark:bg-slate-900/90 dark:ring-slate-700 dark:hover:text-slate-100 ${
+                  menuDoc?.doc_id === d.doc_id
+                    ? "opacity-100"
+                    : "opacity-0 group-hover:opacity-100"
+                }`}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="h-4 w-4"
+                  aria-hidden="true"
+                >
+                  <circle cx="5" cy="12" r="1.6" />
+                  <circle cx="12" cy="12" r="1.6" />
+                  <circle cx="19" cy="12" r="1.6" />
+                </svg>
               </button>
+              {menuDoc?.doc_id === d.doc_id && (
+                <>
+                  {/* 点击菜单外区域关闭 */}
+                  <div
+                    className="fixed inset-0 z-20"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMenuDoc(null);
+                    }}
+                  />
+                  <div className="absolute right-4 top-11 z-30 w-44 rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-800">
+                    <p className="px-3 py-1.5 text-xs font-semibold text-slate-400 dark:text-slate-500">
+                      移动到文件夹
+                    </p>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void moveDoc(d.doc_id, null).then(() => setMenuDoc(null));
+                      }}
+                      className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-slate-700 transition-colors duration-150 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+                    >
+                      未分类
+                      {!d.folder_id && (
+                        <span className="text-xs text-blue-600 dark:text-blue-400">✓</span>
+                      )}
+                    </button>
+                    {folders.map((f) => (
+                      <button
+                        key={f.folder_id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void moveDoc(d.doc_id, f.folder_id).then(() =>
+                            setMenuDoc(null),
+                          );
+                        }}
+                        className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-slate-700 transition-colors duration-150 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+                      >
+                        <span className="min-w-0 truncate">{f.name}</span>
+                        {d.folder_id === f.folder_id && (
+                          <span className="shrink-0 text-xs text-blue-600 dark:text-blue-400">✓</span>
+                        )}
+                      </button>
+                    ))}
+                    {folders.length === 0 && (
+                      <p className="px-3 py-1.5 text-xs text-slate-400 dark:text-slate-500">
+                        尚无文件夹，可在左侧新建
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
             </li>
           ))}
         </ul>
       )}
 
-      {/* 搜索无结果 */}
+      {/* 搜索/过滤无结果 */}
       {hasDocs && filtered.length === 0 && (
         <p className="mt-10 text-center text-sm text-slate-500 dark:text-slate-400">
-          没有匹配「{query}」的文献
+          {query.trim()
+            ? `没有匹配「${query}」的文献`
+            : "该文件夹暂无文献 · 通过卡片右上角「⋯」归档"}
         </p>
       )}
 

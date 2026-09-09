@@ -39,7 +39,7 @@ def test_data_dir_and_fallback_flag(tmp_path, monkeypatch):
     assert (tmp_path / "cache").is_dir()  # init 已建缓存目录
 
 
-def test_data_dir_and_fallback_flag(tmp_path, monkeypatch):
+def test_data_dir_uses_env_config_dir(tmp_path, monkeypatch):
     """阶段6-T4：data_dir = config.json 所在目录；显式 PDF_READER_CONFIG 不算兜底轨。"""
     cfg_file = tmp_path / "config.json"
     cfg_file.write_text("{}", encoding="utf-8")

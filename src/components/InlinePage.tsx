@@ -10,6 +10,7 @@ import FormulaButton from "./common/FormulaButton";
 import ReaderToolbar from "./ReaderToolbar";
 import ReaderTabs from "./ReaderTabs";
 import OriginalReader from "./OriginalReader";
+import OriginalBilingualPlaceholder from "./OriginalBilingualPlaceholder";
 
 /**
  * 紧跟模式：整篇连续文档流（无分页，对标 Scholaread，用户决策 2026-09-06）——
@@ -81,9 +82,12 @@ export default function InlinePage() {
         </div>
       )}
 
-      {/* 原版模式（阶段5/D6）：pdfjs 原样渲染 + 块坐标译文浮层；进度条仍常驻上方 */}
-      {readerMode === "original" ? (
+      {/* 原版PDF 组（阶段7-T3 分组）：点击翻译=pdfjs 原样渲染 + 块坐标译文浮层；
+          左右对照=T4 占位；进度条仍常驻上方 */}
+      {readerMode === "original_click" ? (
         <OriginalReader />
+      ) : readerMode === "original_bilingual" ? (
+        <OriginalBilingualPlaceholder />
       ) : (
       /* 整篇连续文档流：所有页的 block 按文档顺序排布 */
       <div className="h-[calc(100vh-170px)] overflow-y-auto">

@@ -1,8 +1,13 @@
 import { create } from "zustand";
 
-/** readerMode（阶段5-T2/D6）：original = pdfjs 原版渲染 + 块坐标译文浮层；
- *  parallel = 现有提取式对照视图（bilingual/inline 由 mode 决定）。 */
-export type ReaderMode = "parallel" | "original";
+/** readerMode（阶段5-T2/D6 立项，阶段7-T3 分组扩展）：
+ *  parallel = 重排版（bilingual/inline 由 mode 决定）；
+ *  original_click = 原版PDF·点击翻译（pdfjs 渲染 + 块坐标译文浮层）；
+ *  original_bilingual = 原版PDF·左右对照（左 pdfjs 右译文，阶段7-T4 实现）。 */
+export type ReaderMode =
+  | "parallel"
+  | "original_click"
+  | "original_bilingual";
 
 /** 阶段7-T1 全局缩放：0.7–2.0、步进 0.1。阅读偏好（非 API 配置），
  *  按任务约定走 localStorage（`pdf-reader.zoom`），不进 config.json。 */
@@ -41,13 +46,16 @@ function persistZoom(z: number): void {
   }
 }
 
-/** 有效缩放值：用户设置过用用户值，未设置按形态回落缺省（阶段7-T2）。 */
+/** 有效缩放值：用户设置过用用户值，未设置按形态回落缺省（阶段7-T2）。
+ *  非 parallel 即原版PDF 组（点击翻译/左右对照，缺省同为 70%）。 */
 export function effectiveZoom(
   zoom: number | null,
   readerMode: ReaderMode
 ): number {
   if (zoom != null) return zoom;
-  return readerMode === "original" ? ZOOM_ORIGINAL_DEFAULT : ZOOM_REWRITE_DEFAULT;
+  return readerMode === "parallel"
+    ? ZOOM_REWRITE_DEFAULT
+    : ZOOM_ORIGINAL_DEFAULT;
 }
 
 interface UiState {

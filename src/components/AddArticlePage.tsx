@@ -1,20 +1,30 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { usePdfStore } from "../stores/pdfStore";
-import { useOcr } from "../hooks/useOcr";
+import { startTranslation } from "../lib/translationManager";
 import { openFileDialog, uploadFile, isTauri } from "../lib/bridge";
 
 /**
- * 添加文章页（2026-09-09 靠岸学术风格改版）：
- * 大标题 + 卡片内虚线拖拽区。选择文件后立即启动翻译管线并返回文档库
- * （进度内联显示在文档库，OCR 完成自动进入阅读页）。
+ * 添加文章页（2026-09-09 靠岸学术风格改版；阶段8 多会话改造）：
+ * 大标题 + 卡片内虚线拖拽区。选择文件后交给 translationManager 后台翻译
+ * （轮询不再依赖本页组件生命周期），成功立即返回文档库——进度内联显示，
+ * 不占用阅读会话，翻译途中可自由打开其他文献。
  */
 export default function AddArticlePage() {
-  const { setFile, setFilePath, setPages, setResult, setError } = usePdfStore();
-  const { processFile } = useOcr();
   const navigate = useNavigate();
   const [isDragging, setIsDragging] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+
+  // 交给 translationManager 启动后台翻译：成功 → 返回文档库看进度；
+  // 失败（如已有任务进行中）→ 留在本页提示原因
+  const handleFile = async (path: string) => {
+    const fileName = path.split(/[\\/]/).pop() || path;
+    const r = await startTranslation(path, fileName);
+    if (r.ok) {
+      navigate("/");
+    } else {
+      setLocalError(r.reason);
+    }
+  };
 
   // Tauri 环境下监听 OS 文件拖拽（本页挂载期间整页生效；MainPage 的监听
   // 随其卸载而移除，/add 页必须自持一份，否则拖放无响应）
@@ -34,7 +44,7 @@ export default function AddArticlePage() {
                 setIsDragging(false);
                 const paths = payload.paths;
                 if (paths && paths.length > 0 && paths[0].toLowerCase().endsWith(".pdf")) {
-                  startTranslation(paths[0]);
+                  void handleFile(paths[0]);
                 }
               }
             })
@@ -50,22 +60,6 @@ export default function AddArticlePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const startTranslation = (path: string) => {
-    if (usePdfStore.getState().isLoading) return; // 翻译进行中不接受新任务
-    setFile({
-      name: path.split(/[\\/]/).pop() || path,
-      size: 0,
-      type: "application/pdf",
-      path,
-    } as any);
-    setFilePath(path);
-    setPages([]);
-    setResult(null);
-    setError(null);
-    void processFile(path);
-    navigate("/"); // 进度在文档库内联显示，OCR 完成自动进入阅读页
-  };
-
   const handleBrowse = async () => {
     const selected = await openFileDialog();
     if (!selected) return;
@@ -73,7 +67,7 @@ export default function AddArticlePage() {
       setLocalError("仅支持 PDF 文件");
       return;
     }
-    startTranslation(selected);
+    void handleFile(selected);
   };
 
   const handleDrop = async (e: React.DragEvent) => {
@@ -87,7 +81,7 @@ export default function AddArticlePage() {
       return;
     }
     const path = await uploadFile(file);
-    if (path) startTranslation(path);
+    if (path) void handleFile(path);
   };
 
   return (

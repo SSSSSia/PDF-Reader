@@ -7,7 +7,7 @@
  *
  * 设计约定：
  * - 所有函数对调用方返回**与 Tauri 命令一致的形态**（如 run_pipeline 返回 JSON 字符串），
- *   这样上层 useOcr / configStore 无需感知运行环境。
+ *   这样上层调用方（translationManager / configStore 等）无需感知运行环境。
  * - 仅在「非 Tauri 环境」走 HTTP，且只连本地后端，不触碰任何外部 API。
  * - 是否 Tauri 以 `__TAURI_INTERNALS__` 是否存在判定。
  */

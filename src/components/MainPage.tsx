@@ -3,7 +3,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
 import { useLibraryStore } from "../stores/libraryStore";
-import { useOcr } from "../hooks/useOcr";
+import { useSessionsStore } from "../stores/sessionsStore";
+import { startTranslation, currentTranslationKey } from "../lib/translationManager";
 import { openFileDialog, uploadFile, isTauri, openDoc } from "../lib/bridge";
 import { useDocThumbnails } from "../hooks/useDocThumbnails";
 import type { DocMeta } from "../types";
@@ -19,22 +20,12 @@ import LoadingSpinner from "./common/LoadingSpinner";
  */
 export default function MainPage() {
   const { folderId } = useParams();
-  const {
-    setFile,
-    setFilePath,
-    file,
-    pages,
-    isLoading,
-    progress,
-    error,
-    setError,
-    setResult,
-    setCurrentPage,
-    setPages,
-  } = usePdfStore();
+  const { pages, isLoading, error, setError } = usePdfStore();
   const { mode } = useUiStore();
   const { docs, folders, loaded, fetchAll, moveDoc } = useLibraryStore();
-  const { processFile } = useOcr();
+  const sessions = useSessionsStore((s) => s.sessions);
+  // 进行中的翻译任务（后台轮询，阶段8）：与"当前活跃阅读会话"解耦
+  const runningJob = sessions.find((s) => s.job?.status === "running");
   const navigate = useNavigate();
   const [isDragging, setIsDragging] = useState(false);
   // 阶段1-T2：跳转时机由「全部翻译完成」提前到「pages 就绪（OCR 完成）」。
@@ -103,25 +94,19 @@ export default function MainPage() {
     if (!selected.toLowerCase().endsWith(".pdf")) {
       return;
     }
-    // 翻译进行中不接受新文件（防止双管线并发轮询互相污染进度显示）
-    if (usePdfStore.getState().isLoading) return;
-    setFile({
-      name: selected.split(/[\\/]/).pop() || selected,
-      size: 0,
-      type: "application/pdf",
-      path: selected,
-    } as any);
-    setFilePath(selected);
-    // 新翻译开始：清掉上一篇的内存结果，避免旧内容闪现/干扰自动跳转判定
-    setPages([]);
-    setResult(null);
-    setError(null);
-
-    // 不 await：跳转由上方 pages 就绪 effect 驱动（OCR 完成即进阅读页），
-    // processFile 的轮询闭包持有 zustand setter，MainPage 卸载后仍正常回传。
+    // 阶段8：同一时间仅 1 个翻译任务（后端支持并发，先按当前需求收口）；
+    // 翻译不再占用阅读会话——进行中可自由打开其他文献
+    if (currentTranslationKey()) {
+      setError("已有翻译任务进行中，请等待完成后再添加新任务");
+      return;
+    }
+    const fileName = selected.split(/[\\/]/).pop() || selected;
+    // 不 await 轮询完成：跳转仍由上方 pages 就绪 effect 驱动；
+    // 轮询在 translationManager 后台进行，MainPage 卸载不受影响。
     navigatedRef.current = false;
-    pagesWereEmptyRef.current = true; // 本页发起的新翻译：pages 清空后待其就绪自动跳转
-    void processFile(selected);
+    pagesWereEmptyRef.current = true; // 本页发起的新翻译：pages 就绪后自动跳转
+    const r = await startTranslation(selected, fileName);
+    if (!r.ok) setError(r.reason);
   };
 
   const handleBrowse = async () => {
@@ -142,17 +127,33 @@ export default function MainPage() {
     if (path) await handlePath(path);
   };
 
-  /** 打开已翻译文章：内存有该篇结果直接恢复；否则缓存重建秒开（阶段6-T3） */
+  /** 点击进度卡进入翻译会话（阶段8）：若当前活跃会话不是这一篇，
+   *  先快照停靠当前会话并换入翻译会话，再导航——不打断正在读的文献。 */
+  const handleProgressClick = () => {
+    if (!runningJob) return;
+    if (usePdfStore.getState().sessionKey !== runningJob.key) {
+      useSessionsStore.getState().activate(runningJob.key);
+    }
+    navigatedRef.current = true;
+    navigate(mode === "inline" ? "/reader/inline" : "/reader/bilingual");
+  };
+
+  /** 打开已翻译文章（阶段8 多会话）：已有页签直接激活；否则停靠当前会话
+   *  → 缓存重建秒开 → 注册新会话。翻译进行中不再互斥（轮询已后台化）。 */
   const handleOpenDoc = async (doc: DocMeta) => {
-    // 翻译进行中不开新会话：管线轮询正在向同一 pdfStore 写 pages，
-    // 打开其他文献会互相覆盖（2026-09-09 用户反馈的跳转混乱同源）
-    if (usePdfStore.getState().isLoading) return;
     if (openingId) return;
-    // 内存命中：当前 pdfStore 装的就是这一篇（路径一致且有内容），直接回阅读页。
-    const currentPath = (file as { path?: string } | null)?.path;
-    if (pages.length > 0 && currentPath && currentPath === doc.file_path) {
+    const sessions = useSessionsStore.getState();
+    // 已是该活跃会话（或内存中装的就是这一篇但未登记）→ 直接回阅读页
+    if (usePdfStore.getState().sessionKey === doc.doc_id) {
       navigatedRef.current = true;
       navigate(mode === "inline" ? "/reader/inline" : "/reader/bilingual");
+      return;
+    }
+    // 已有页签 → 快照交换激活
+    if (sessions.getByKey(doc.doc_id)) {
+      sessions.activate(doc.doc_id);
+      navigatedRef.current = true;
+      navigate("/reader/bilingual");
       return;
     }
     setOpeningId(doc.doc_id);
@@ -160,18 +161,38 @@ export default function MainPage() {
     setError(null);
     try {
       const r = await openDoc(doc.doc_id);
-      setFile({
+      // 停靠当前活跃会话（可能是另一篇文献，也可能是翻译中的任务）
+      sessions.captureActive();
+      const pdf = usePdfStore.getState();
+      pdf.setFile({
         name: `${doc.title}.pdf`,
         size: 0,
         type: "application/pdf",
         path: r.file_exists ? doc.file_path : "",
       } as any);
       // 源文件缺失：filePath 置 null（原版模式/式按钮自动禁用），对照/紧跟纯缓存可用
-      setFilePath(r.file_exists ? doc.file_path : null);
-      setResult(null);
-      setCurrentPage(0);
+      pdf.setFilePath(r.file_exists ? doc.file_path : null);
+      pdf.setPages(r.pages);
+      pdf.setResult(null);
+      pdf.setCurrentPage(0);
+      pdf.setError(null);
+      pdf.setLoading(false);
+      pdf.setProgress(0);
+      pdf.setSessionKey(doc.doc_id);
+      sessions.register({
+        key: doc.doc_id,
+        title: doc.title,
+        kind: "doc",
+        snapshot: {
+          filePath: r.file_exists ? doc.file_path : null,
+          fileName: `${doc.title}.pdf`,
+          pages: r.pages,
+          currentPage: 0,
+          result: null,
+          error: null,
+        },
+      });
       navigatedRef.current = true; // 直接导航，避免 pages effect 重复跳转
-      setPages(r.pages);
       navigate("/reader/bilingual");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -333,21 +354,17 @@ export default function MainPage() {
         </div>
       )}
 
-      {/* 翻译进行中：内联进度卡（可点击进入实时进度阅读页——翻译中 pdfStore
-          里装的就是这一篇，直接导航安全；多会话方案落地前这是过渡交互） */}
-      {isLoading && file && (
+      {/* 翻译进行中：内联进度卡（阶段8 后台轮询驱动，与活跃阅读会话解耦；
+          点击激活翻译会话再进入阅读页，不会打断当前阅读的那一篇） */}
+      {runningJob && runningJob.job && (
         <div
           role="button"
           tabIndex={0}
-          onClick={() =>
-            navigate(mode === "inline" ? "/reader/inline" : "/reader/bilingual")
-          }
+          onClick={handleProgressClick}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              navigate(
-                mode === "inline" ? "/reader/inline" : "/reader/bilingual",
-              );
+              handleProgressClick();
             }
           }}
           title="点击查看翻译实时进度（OCR 完成后可边译边读）"
@@ -357,19 +374,19 @@ export default function MainPage() {
             <p className="min-w-0 truncate text-sm text-slate-700 dark:text-slate-300">
               正在翻译：
               <span className="font-medium text-slate-900 dark:text-slate-100">
-                {file.name}
+                {runningJob.snapshot.fileName}
               </span>
               <span className="ml-2 text-xs text-blue-600 dark:text-blue-400">
                 点击进入 →
               </span>
             </p>
             <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">
-              {Math.round(progress)}%
+              {Math.round(runningJob.job.progress)}%
             </span>
           </div>
           <div
             role="progressbar"
-            aria-valuenow={Math.round(progress)}
+            aria-valuenow={Math.round(runningJob.job.progress)}
             aria-valuemin={0}
             aria-valuemax={100}
             className="mt-2.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"
@@ -377,7 +394,9 @@ export default function MainPage() {
           >
             <div
               className="h-full rounded-full bg-blue-600 transition-all duration-300"
-              style={{ width: `${Math.max(2, Math.round(progress))}%` }}
+              style={{
+                width: `${Math.max(2, Math.round(runningJob.job.progress))}%`,
+              }}
             />
           </div>
         </div>
@@ -400,11 +419,9 @@ export default function MainPage() {
                   }
                 }}
                 title={
-                  isLoading
-                    ? "翻译进行中，完成后即可打开文献"
-                    : d.file_exists === false
-                      ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
-                      : "打开已翻译内容（秒开，不重新翻译）"
+                  d.file_exists === false
+                    ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
+                    : "打开已翻译内容（秒开，不重新翻译）"
                 }
                 className={`card h-full cursor-pointer p-3 transition-colors duration-150 hover:border-slate-400 dark:hover:border-slate-500 ${
                   openingId ? "cursor-wait opacity-60" : ""

@@ -173,13 +173,21 @@ export default function MainPage() {
         </p>
       </div>
 
-      {/* 阶段6-T3：已翻译文章列表（持久化索引，点击缓存重建秒开） */}
-      {docs !== null && docs.length > 0 && (
+      {/* 阶段6-T3：已翻译文章列表（持久化索引，点击缓存重建秒开）。
+          空列表也显示区块 + 引导（2026-09-09 用户反馈：完全隐藏看起来像功能没生效） */}
+      {docs !== null && (
         <div className="mt-8 w-full max-w-lg animate-fade-in">
           <h2 className="mb-2.5 text-sm font-semibold text-slate-500 dark:text-slate-400">
-            已翻译文章（{docs.length}）
+            已翻译文章{docs.length > 0 ? `（${docs.length}）` : ""}
           </h2>
-          <ul className="space-y-2">
+          {docs.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-500 dark:border-slate-600 dark:text-slate-400">
+              暂无翻译记录——翻译第一篇论文后会列在这里，点击即可秒开重读。
+              此前翻译过的旧文档需重新翻译一次才会收录（缓存全命中，秒级完成、零
+              API 消耗）。
+            </p>
+          ) : (
+            <ul className="space-y-2">
             {docs.map((d) => (
               <li key={d.doc_id}>
                 <button
@@ -209,6 +217,7 @@ export default function MainPage() {
               </li>
             ))}
           </ul>
+            )}
         </div>
       )}
 

@@ -333,14 +333,34 @@ export default function MainPage() {
         </div>
       )}
 
-      {/* 翻译进行中：内联进度（返回文献库不中断，OCR 完成自动进阅读页） */}
+      {/* 翻译进行中：内联进度卡（可点击进入实时进度阅读页——翻译中 pdfStore
+          里装的就是这一篇，直接导航安全；多会话方案落地前这是过渡交互） */}
       {isLoading && file && (
-        <div className="card mt-5 px-4 py-3.5 animate-fade-in">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() =>
+            navigate(mode === "inline" ? "/reader/inline" : "/reader/bilingual")
+          }
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              navigate(
+                mode === "inline" ? "/reader/inline" : "/reader/bilingual",
+              );
+            }
+          }}
+          title="点击查看翻译实时进度（OCR 完成后可边译边读）"
+          className="card mt-5 cursor-pointer px-4 py-3.5 animate-fade-in transition-colors duration-150 hover:border-blue-400 dark:hover:border-blue-500"
+        >
           <div className="flex items-center justify-between gap-3">
             <p className="min-w-0 truncate text-sm text-slate-700 dark:text-slate-300">
               正在翻译：
               <span className="font-medium text-slate-900 dark:text-slate-100">
                 {file.name}
+              </span>
+              <span className="ml-2 text-xs text-blue-600 dark:text-blue-400">
+                点击进入 →
               </span>
             </p>
             <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">

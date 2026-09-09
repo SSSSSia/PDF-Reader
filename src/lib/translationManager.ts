@@ -1,0 +1,224 @@
+import { runPipeline, getPipelineStatus } from "./bridge";
+import { usePdfStore } from "../stores/pdfStore";
+import { useSessionsStore } from "../stores/sessionsStore";
+import { useLibraryStore } from "../stores/libraryStore";
+import type { PipelineResult, PageResult } from "../types";
+
+/**
+ * 翻译管理器（阶段8-T2 多会话阅读）：轮询循环从 useOcr（组件闭包）迁到
+ * 模块级后台任务——翻译进行中用户可自由切换/打开其他文献（会话快照交换），
+ * 轮询结果写会话注册表，仅当该会话是当前活跃会话时才镜像到 pdfStore。
+ *
+ * 并发策略：同一时间仅 1 个翻译任务（后端本就支持多 job 并发，这里先按
+ * 用户当前需求收口；第二次添加给出明确提示，架构允许后续放开）。
+ */
+
+const POLL_INTERVAL_MS = 2500;
+const MAX_WAIT_MS = 30 * 60 * 1000; // 30 分钟上限，避免无限轮询
+/** 状态接口连续失败上限（网络瞬断重试，超限判定失败） */
+const MAX_POLL_ERRORS = 3;
+
+let runningKey: string | null = null;
+
+/** 当前进行中的翻译会话 key（文献库进度卡/页签用） */
+export function currentTranslationKey(): string | null {
+  return runningKey;
+}
+
+/** pages 渐进签名（阶段1-T1 去抖，自 useOcr 原样迁移） */
+function progressiveSignature(pages: PageResult[]): number {
+  let translated = 0;
+  let total = 0;
+  for (const p of pages) {
+    for (const b of p.blocks) {
+      total += 1;
+      if (b.translated) translated += 1;
+    }
+  }
+  return pages.length * 1_000_000 + total * 1_000 + translated;
+}
+
+export type StartResult =
+  | { ok: true; key: string }
+  | { ok: false; reason: string };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 启动翻译并后台跟踪进度。
+ * 前置：调用方已确认无进行中任务（本函数二次防御）。
+ * 副作用：停靠当前活跃会话（captureActive）→ pdfStore 切换为新的翻译会话
+ * （OCR 完成 pages 渐进回传，MainPage 既有 auto-navigate 体验保持不变）。
+ */
+export async function startTranslation(
+  filePath: string,
+  fileName: string,
+): Promise<StartResult> {
+  if (runningKey) {
+    return {
+      ok: false,
+      reason: "已有翻译任务进行中，请等待完成后再添加新任务",
+    };
+  }
+  const sessions = useSessionsStore.getState();
+  const pdf = usePdfStore.getState();
+
+  // 先停靠当前活跃会话（必须在改动 pdfStore 之前，否则快照被污染）
+  sessions.captureActive();
+
+  pdf.setLoading(true);
+  pdf.setProgress(0);
+  pdf.setError(null);
+  pdf.setResult(null);
+  pdf.setPages([]);
+  pdf.setFile({
+    name: fileName,
+    size: 0,
+    type: "application/pdf",
+    path: filePath,
+  } as any);
+  pdf.setFilePath(filePath);
+  pdf.setSessionKey(null); // job_id 未知，runPipeline 返回后再设
+
+  let start: PipelineResult;
+  try {
+    const startStr = (await runPipeline(filePath)) as string;
+    start = JSON.parse(startStr) as PipelineResult;
+  } catch (e) {
+    pdf.setLoading(false);
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+  if (start.status === "failed") {
+    pdf.setLoading(false);
+    return { ok: false, reason: start.error ?? "流水线启动失败" };
+  }
+  if (!start.job_id) {
+    pdf.setLoading(false);
+    return { ok: false, reason: "后端未返回 job_id，无法跟踪处理进度" };
+  }
+
+  const key = start.job_id;
+  runningKey = key;
+  pdf.setSessionKey(key);
+  sessions.register({
+    key,
+    title: fileName.replace(/\.pdf$/i, ""),
+    kind: "job",
+    snapshot: {
+      filePath,
+      fileName,
+      pages: [],
+      currentPage: 0,
+      result: null,
+      error: null,
+    },
+    job: { progress: 0, status: "running" },
+  });
+  void poll(key, filePath);
+  return { ok: true, key };
+}
+
+/** 后台轮询：写会话注册表；活跃会话同步镜像 pdfStore（渐进渲染体验不变） */
+async function poll(key: string, filePath: string): Promise<void> {
+  const deadline = Date.now() + MAX_WAIT_MS;
+  let lastSig = -1;
+  let errorCount = 0;
+
+  while (Date.now() < deadline) {
+    let status: PipelineResult;
+    try {
+      const statusStr = (await getPipelineStatus(key)) as string;
+      status = JSON.parse(statusStr) as PipelineResult;
+      errorCount = 0;
+    } catch {
+      errorCount += 1;
+      if (errorCount >= MAX_POLL_ERRORS) {
+        fail(key, "连接后端失败，翻译已中断，请重新处理该文件");
+        return;
+      }
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
+
+    const progress = Math.min(100, status.progress ?? 0);
+    const jobStatus =
+      status.status === "done"
+        ? "done"
+        : status.status === "failed"
+          ? "failed"
+          : "running";
+    useSessionsStore.getState().updateJob(key, { progress, status: jobStatus });
+
+    if (status.status === "unknown") {
+      fail(key, "任务已过期或后端已重启，请重新处理该文件");
+      return;
+    }
+
+    // 渐进回传：pages 就绪（OCR 完成后）即渲染原文，译文随后逐段流入
+    const pages = status.pages ?? [];
+    if (pages.length > 0) {
+      const sig = progressiveSignature(pages);
+      if (sig !== lastSig) {
+        lastSig = sig;
+        useSessionsStore.getState().updateSnapshot(key, { pages });
+        const pdf = usePdfStore.getState();
+        if (pdf.sessionKey === key) {
+          pdf.setPages(pages);
+          pdf.setProgress(progress);
+        }
+      }
+    }
+
+    if (status.status === "done") {
+      useSessionsStore
+        .getState()
+        .updateSnapshot(key, { pages, result: status, error: null });
+      useSessionsStore.getState().updateJob(key, { progress: 100, status: "done" });
+      const pdf = usePdfStore.getState();
+      if (pdf.sessionKey === key) {
+        pdf.setPages(pages);
+        pdf.setResult(status);
+        pdf.setProgress(100);
+        pdf.setLoading(false);
+      }
+      runningKey = null;
+      await maybeRekey(key, filePath); // 完成后刷新文献库并对齐 doc_id
+      return;
+    }
+    if (status.status === "failed") {
+      fail(key, status.error ?? "处理失败，请重试");
+      return;
+    }
+
+    await sleep(POLL_INTERVAL_MS);
+  }
+  fail(key, "处理超时，请稍后重试");
+}
+
+function fail(key: string, message: string): void {
+  const sessions = useSessionsStore.getState();
+  const prev = sessions.getByKey(key)?.job?.progress ?? 0;
+  sessions.updateJob(key, { progress: prev, status: "failed" });
+  sessions.updateSnapshot(key, { error: message });
+  runningKey = null;
+  const pdf = usePdfStore.getState();
+  if (pdf.sessionKey === key) {
+    pdf.setError(message);
+    pdf.setLoading(false);
+  }
+}
+
+/** 翻译完成后：刷新文献库列表；会话 key 从 job_id 对齐到 doc_id（与文献库一致） */
+async function maybeRekey(key: string, filePath: string): Promise<void> {
+  try {
+    await useLibraryStore.getState().fetchAll();
+    const doc = useLibraryStore
+      .getState()
+      .docs.find((d) => d.file_path === filePath);
+    if (doc) {
+      useSessionsStore.getState().rekey(key, doc.doc_id, doc.title);
+    }
+  } catch {
+    /* 刷新失败不影响翻译结果（文献库下次进入会重新拉取） */
+  }
+}

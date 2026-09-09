@@ -10,6 +10,9 @@ interface PdfState {
   progress: number;
   error: string | null;
   result: PipelineResult | null;
+  /** 当前活跃会话 key（阶段8-T1 多会话）：doc_id 或 job_id；null = 无会话。
+   *  pdfStore 仅作"活跃会话"载体，非活跃会话快照存 sessionsStore。 */
+  sessionKey: string | null;
 
   setFile: (file: File | null) => void;
   setFilePath: (path: string | null) => void;
@@ -30,6 +33,7 @@ interface PdfState {
   setProgress: (progress: number) => void;
   setError: (error: string | null) => void;
   setResult: (result: PipelineResult | null) => void;
+  setSessionKey: (key: string | null) => void;
   reset: () => void;
 }
 
@@ -42,6 +46,7 @@ export const usePdfStore = create<PdfState>((set) => ({
   progress: 0,
   error: null,
   result: null,
+  sessionKey: null,
 
   setFile: (file) => set({ file }),
   setFilePath: (path) => set({ filePath: path }),
@@ -77,6 +82,7 @@ export const usePdfStore = create<PdfState>((set) => ({
   setProgress: (progress) => set({ progress }),
   setError: (error) => set({ error }),
   setResult: (result) => set({ result }),
+  setSessionKey: (sessionKey) => set({ sessionKey }),
   reset: () =>
     set({
       file: null,
@@ -87,5 +93,6 @@ export const usePdfStore = create<PdfState>((set) => ({
       progress: 0,
       error: null,
       result: null,
+      sessionKey: null,
     }),
 }));

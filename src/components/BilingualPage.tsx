@@ -6,6 +6,7 @@ import TranslatableImage from "./common/TranslatableImage";
 import BlockTranslateButton from "./common/BlockTranslateButton";
 import FormulaButton from "./common/FormulaButton";
 import ReaderToolbar from "./ReaderToolbar";
+import ReaderTabs from "./ReaderTabs";
 import OriginalReader from "./OriginalReader";
 
 /**
@@ -45,6 +46,7 @@ export default function BilingualPage() {
   return (
     <div>
       <ReaderToolbar />
+      <ReaderTabs />
 
       {/* 翻译进行中：非阻塞进度条（原文已可读，译文逐段流入） */}
       {isLoading && (

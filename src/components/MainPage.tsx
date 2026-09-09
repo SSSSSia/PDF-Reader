@@ -1,18 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
 import { useOcr } from "../hooks/useOcr";
 import { openFileDialog, uploadFile, isTauri, listDocs, openDoc } from "../lib/bridge";
+import { useDocThumbnails } from "../hooks/useDocThumbnails";
 import type { DocMeta } from "../types";
 import LoadingSpinner from "./common/LoadingSpinner";
 
 /**
- * 文档库（主页，2026-09-09 页面逻辑重规划）：
- * - 已翻译文章卡片列表为主体；「+ 翻译新文档」按钮 + 整页拖拽为入口；
- * - 首次使用（列表为空）显示虚线拖拽区作主视觉，有文章后收起；
- * - 翻译进度内联显示（返回文档库不中断），OCR 完成自动进入阅读页；
- * - 点击文章：内存有该篇结果直接恢复，否则缓存重建秒开（不重跑管线）。
+ * 文献库（主页，2026-09-09 靠岸学术风格改版）：
+ * - 页头「文献库 + 添加文章按钮」；计数/搜索行；3 列首页缩略图卡片网格；
+ * - 空状态保留整块拖拽上传区（老入口不丢弃）；
+ * - 有文献时仍支持整页拖入 PDF（Tauri 原生事件 / 浏览器 HTML5 drop）；
+ * - 翻译进度内联显示，OCR 完成自动进入阅读页；点击卡片缓存秒开。
  */
 export default function MainPage() {
   const {
@@ -37,6 +38,8 @@ export default function MainPage() {
   const navigatedRef = useRef(false);
   const [docs, setDocs] = useState<DocMeta[] | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const thumbs = useDocThumbnails(docs);
 
   // 首次进入主页拉取列表；从阅读页返回时重挂载自动刷新（可能刚翻完新文档）
   useEffect(() => {
@@ -46,7 +49,7 @@ export default function MainPage() {
   }, []);
 
   // pages 首次非空（后端 OCR 完成、progress≈30）即进入阅读页。
-  // 仅在翻译进行中（isLoading）触发：从阅读页返回文档库时 pdfStore 仍持有
+  // 仅在翻译进行中（isLoading）触发：从阅读页返回文献库时 pdfStore 仍持有
   // 上篇结果，若无条件跳转会立刻把用户弹回阅读页（2026-09-09 用户反馈的
   // 「← 文档库返回不了主页」即此因）。
   useEffect(() => {
@@ -123,10 +126,10 @@ export default function MainPage() {
     if (isTauri()) return;
     e.preventDefault();
     setIsDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".pdf")) return;
-    const path = await uploadFile(file);
+    const dropped = e.dataTransfer.files?.[0];
+    if (!dropped) return;
+    if (!dropped.name.toLowerCase().endsWith(".pdf")) return;
+    const path = await uploadFile(dropped);
     if (path) await handlePath(path);
   };
 
@@ -134,7 +137,6 @@ export default function MainPage() {
   const handleOpenDoc = async (doc: DocMeta) => {
     if (openingId) return;
     // 内存命中：当前 pdfStore 装的就是这一篇（路径一致且有内容），直接回阅读页。
-    // file 以 as any 存入（含 path 字段，见 handlePath），此处同样取扩展字段。
     const currentPath = (file as { path?: string } | null)?.path;
     if (pages.length > 0 && currentPath && currentPath === doc.file_path) {
       navigatedRef.current = true;
@@ -166,10 +168,15 @@ export default function MainPage() {
   };
 
   const hasDocs = (docs?.length ?? 0) > 0;
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return docs ?? [];
+    return (docs ?? []).filter((d) => d.title.toLowerCase().includes(q));
+  }, [docs, query]);
 
   return (
     <div
-      className="mx-auto max-w-2xl"
+      className="relative mx-auto max-w-5xl"
       onDragOver={(e) => {
         if (isTauri()) return;
         e.preventDefault();
@@ -178,97 +185,129 @@ export default function MainPage() {
       onDragLeave={() => setIsDragging(false)}
       onDrop={handleDrop}
     >
-      {/* 页头：大标题 + 一句式状态说明（不再挤"标题+计数"） */}
-      <header className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
-          文档库
-        </h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          {docs === null
-            ? "正在加载…"
-            : hasDocs
-              ? `已翻译 ${docs.length} 篇 · 点击卡片继续阅读`
-              : "翻译你的第一篇论文，它会出现在这里"}
-        </p>
-      </header>
+      {/* 整页拖入提示层（有文献时拖拽反馈；空状态由大拖拽区自行高亮） */}
+      {isDragging && hasDocs && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/80 dark:border-blue-400 dark:bg-blue-900/30">
+          <p className="text-sm font-medium text-blue-600 dark:text-blue-300">
+            松开即可开始翻译
+          </p>
+        </div>
+      )}
 
-      {/* 上传面板（常驻入口；空状态为主视觉加大，有文章后收窄为横向条） */}
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label="拖入或选择 PDF 文件开始翻译"
-        onClick={handleBrowse}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleBrowse();
-          }
-        }}
-        className={`flex cursor-pointer items-center gap-4 rounded-xl border-2 border-dashed text-left transition-colors duration-150 ${
-          hasDocs ? "px-5 py-4" : "px-6 py-12 sm:py-14"
-        } ${
-          isDragging
-            ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20"
-            : "border-slate-300 hover:border-blue-400 hover:bg-white dark:border-slate-600 dark:hover:border-blue-500 dark:hover:bg-slate-800/60"
-        }`}
-      >
-        <div
-          className={`flex shrink-0 items-center justify-center rounded-lg ${
-            hasDocs ? "h-10 w-10" : "h-12 w-12"
-          } bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400`}
+      {/* 页头：标题 + 添加文章按钮（靠岸学术式右置主操作） */}
+      <header className="flex items-center justify-between gap-4">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+          文献库
+        </h1>
+        <button
+          onClick={() => navigate("/add")}
+          className="btn-primary inline-flex items-center gap-1.5"
         >
           <svg
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            strokeWidth="1.5"
+            strokeWidth="2"
+            strokeLinecap="round"
+            className="h-4 w-4"
+            aria-hidden="true"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          添加文章
+        </button>
+      </header>
+
+      {/* 空状态：整块拖拽上传区作主视觉（入口不丢弃） */}
+      {docs !== null && !hasDocs && (
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="拖入或选择 PDF 文件开始翻译"
+          onClick={handleBrowse}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleBrowse();
+            }
+          }}
+          onDragOver={(e) => {
+            if (isTauri()) return;
+            e.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          className={`mt-8 flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed px-6 py-16 text-center transition-colors duration-150 sm:py-20 ${
+            isDragging
+              ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20"
+              : "border-slate-300 hover:border-blue-400 hover:bg-white dark:border-slate-600 dark:hover:border-blue-500 dark:hover:bg-slate-800/60"
+          }`}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
             strokeLinecap="round"
             strokeLinejoin="round"
-            className={hasDocs ? "h-5 w-5" : "h-6 w-6"}
+            className="h-12 w-12 text-slate-300 dark:text-slate-600"
             aria-hidden="true"
           >
             <path d="M14.5 3H7a1.5 1.5 0 0 0-1.5 1.5v15A1.5 1.5 0 0 0 7 21h10a1.5 1.5 0 0 0 1.5-1.5V7L14.5 3z" />
             <path d="M14.5 3v4h4" />
             <path d="M12 11v6M9.5 14.5 12 17l2.5-2.5" />
           </svg>
-        </div>
-        <div className="min-w-0 flex-1">
-          <p
-            className={`font-medium text-slate-900 dark:text-slate-100 ${
-              hasDocs ? "text-sm" : "text-base"
-            }`}
-          >
-            {isDragging ? "松开即可开始翻译" : "拖入 PDF 开始翻译"}
+          <p className="text-base font-medium text-slate-900 dark:text-slate-100">
+            {isDragging ? "松开即可开始翻译" : "将 PDF 拖放到这里"}
           </p>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-            {hasDocs
-              ? "或点击选择文件 · 不影响下方已翻译文章"
-              : "点击选择文件 · 识别完成后自动进入阅读，译文边译边显示"}
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            或点击选择文件 · 翻译完成后自动加入文献库
           </p>
-        </div>
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="h-4 w-4 shrink-0 text-slate-300 dark:text-slate-600"
-          aria-hidden="true"
-        >
-          <path d="M5 12h14M13 6l6 6-6 6" />
-        </svg>
-      </div>
-
-      {docs === null && (
-        <div className="mt-4">
-          <LoadingSpinner text="加载文档库…" />
         </div>
       )}
 
-      {/* 翻译进行中：内联进度（返回文档库不中断，OCR 完成自动进阅读页） */}
+      {docs === null && (
+        <div className="mt-8">
+          <LoadingSpinner text="加载文献库…" />
+        </div>
+      )}
+
+      {/* 计数 + 搜索行 */}
+      {hasDocs && (
+        <div className="mt-5 flex items-center justify-between gap-4">
+          <p className="shrink-0 text-sm text-slate-500 dark:text-slate-400">
+            {docs === null ? "…" : `共 ${docs.length} 篇文献`}
+          </p>
+          <div className="relative w-56 sm:w-64">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 dark:text-slate-500"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索文献"
+              aria-label="搜索文献"
+              className="w-full rounded-lg border border-slate-300 bg-white py-1.5 pl-8 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-blue-400"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 翻译进行中：内联进度（返回文献库不中断，OCR 完成自动进阅读页） */}
       {isLoading && file && (
-        <div className="card mt-4 px-4 py-3.5 animate-fade-in">
+        <div className="card mt-5 px-4 py-3.5 animate-fade-in">
           <div className="flex items-center justify-between gap-3">
             <p className="min-w-0 truncate text-sm text-slate-700 dark:text-slate-300">
               正在翻译：
@@ -296,63 +335,79 @@ export default function MainPage() {
         </div>
       )}
 
-      {/* 已翻译文章卡片列表（阶段6-T3；卡片式定稿 2026-09-09） */}
-      {hasDocs && (
-        <>
-          <h2 className="mb-2.5 mt-7 text-sm font-semibold text-slate-500 dark:text-slate-400">
-            已翻译文章
-          </h2>
-          <ul className="space-y-2.5">
-            {docs!.map((d) => (
-              <li key={d.doc_id}>
-                <button
-                  onClick={() => handleOpenDoc(d)}
-                  disabled={openingId !== null}
-                  title={
-                    d.file_exists === false
-                      ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
-                      : "打开已翻译内容（秒开，不重新翻译）"
-                  }
-                  className="group card flex w-full items-center gap-3.5 px-4 py-3.5 text-left transition-colors duration-150 hover:border-slate-400 disabled:cursor-wait disabled:opacity-60 dark:hover:border-slate-500"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-100 text-[10px] font-semibold tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                    PDF
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="min-w-0 flex-1 truncate text-sm font-medium text-slate-900 dark:text-slate-100"
-                        title={d.title}
+      {/* 已翻译文献：3 列首页缩略图卡片网格 */}
+      {hasDocs && filtered.length > 0 && (
+        <ul className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((d) => (
+            <li key={d.doc_id}>
+              <button
+                onClick={() => handleOpenDoc(d)}
+                disabled={openingId !== null}
+                title={
+                  d.file_exists === false
+                    ? "源 PDF 已移动/删除：对照与紧跟模式可用，原版模式不可用"
+                    : "打开已翻译内容（秒开，不重新翻译）"
+                }
+                className="card group block w-full overflow-hidden text-left transition-colors duration-150 hover:border-slate-400 disabled:cursor-wait disabled:opacity-60 dark:hover:border-slate-500"
+              >
+                {/* 首页缩略图（A4 纵向比例；失败/缺失显示占位） */}
+                <div className="relative aspect-[3/4] w-full overflow-hidden bg-slate-100 dark:bg-slate-800">
+                  {thumbs[d.doc_id] ? (
+                    <img
+                      src={thumbs[d.doc_id]}
+                      alt=""
+                      className="h-full w-full object-cover object-top"
+                      draggable={false}
+                    />
+                  ) : (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-400 dark:text-slate-500">
+                      <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className="h-10 w-10"
+                        aria-hidden="true"
                       >
-                        {d.title}
+                        <path d="M14.5 3H7a1.5 1.5 0 0 0-1.5 1.5v15A1.5 1.5 0 0 0 7 21h10a1.5 1.5 0 0 0 1.5-1.5V7L14.5 3z" />
+                        <path d="M14.5 3v4h4" />
+                      </svg>
+                      <span className="text-xs font-medium tracking-wide">
+                        {d.file_exists === false ? "源文件缺失" : "PDF"}
                       </span>
-                      {d.file_exists === false && (
-                        <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                          源文件缺失
-                        </span>
-                      )}
                     </div>
-                    <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                      {d.translated_at} · {d.page_count} 页
-                    </div>
-                  </div>
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="h-4 w-4 shrink-0 text-slate-300 transition-colors duration-150 group-hover:translate-x-0.5 group-hover:text-blue-500 dark:text-slate-600 dark:group-hover:text-blue-400 motion-safe:transition-transform"
-                    aria-hidden="true"
+                  )}
+                  {d.file_exists === false && thumbs[d.doc_id] && (
+                    <span className="absolute right-2 top-2 rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+                      源文件缺失
+                    </span>
+                  )}
+                </div>
+                {/* 标题 + 元信息 */}
+                <div className="px-3.5 py-3">
+                  <p
+                    className="truncate text-sm font-medium text-slate-900 dark:text-slate-100"
+                    title={d.title}
                   >
-                    <path d="M5 12h14M13 6l6 6-6 6" />
-                  </svg>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
+                    {d.title}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                    {d.translated_at} · {d.page_count} 页
+                  </p>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* 搜索无结果 */}
+      {hasDocs && filtered.length === 0 && (
+        <p className="mt-10 text-center text-sm text-slate-500 dark:text-slate-400">
+          没有匹配「{query}」的文献
+        </p>
       )}
 
       {openingId && (

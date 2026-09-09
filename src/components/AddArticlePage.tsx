@@ -1,0 +1,185 @@
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { usePdfStore } from "../stores/pdfStore";
+import { useOcr } from "../hooks/useOcr";
+import { openFileDialog, uploadFile, isTauri } from "../lib/bridge";
+
+/**
+ * 添加文章页（2026-09-09 靠岸学术风格改版）：
+ * 大标题 + 卡片内虚线拖拽区。选择文件后立即启动翻译管线并返回文档库
+ * （进度内联显示在文档库，OCR 完成自动进入阅读页）。
+ */
+export default function AddArticlePage() {
+  const { setFile, setFilePath, setPages, setResult, setError } = usePdfStore();
+  const { processFile } = useOcr();
+  const navigate = useNavigate();
+  const [isDragging, setIsDragging] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  // Tauri 环境下监听 OS 文件拖拽（本页挂载期间整页生效；MainPage 的监听
+  // 随其卸载而移除，/add 页必须自持一份，否则拖放无响应）
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    if ("__TAURI_INTERNALS__" in window) {
+      import("@tauri-apps/api/webview")
+        .then(({ getCurrentWebview }) => {
+          getCurrentWebview()
+            .onDragDropEvent((event) => {
+              const payload = event.payload;
+              if (payload.type === "enter" || payload.type === "over") {
+                setIsDragging(true);
+              } else if (payload.type === "leave") {
+                setIsDragging(false);
+              } else if (payload.type === "drop") {
+                setIsDragging(false);
+                const paths = payload.paths;
+                if (paths && paths.length > 0 && paths[0].toLowerCase().endsWith(".pdf")) {
+                  startTranslation(paths[0]);
+                }
+              }
+            })
+            .then((fn) => {
+              unlisten = fn;
+            });
+        })
+        .catch(() => {
+          /* 非 Tauri 环境忽略 */
+        });
+    }
+    return () => unlisten?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const startTranslation = (path: string) => {
+    if (usePdfStore.getState().isLoading) return; // 翻译进行中不接受新任务
+    setFile({
+      name: path.split(/[\\/]/).pop() || path,
+      size: 0,
+      type: "application/pdf",
+      path,
+    } as any);
+    setFilePath(path);
+    setPages([]);
+    setResult(null);
+    setError(null);
+    void processFile(path);
+    navigate("/"); // 进度在文档库内联显示，OCR 完成自动进入阅读页
+  };
+
+  const handleBrowse = async () => {
+    const selected = await openFileDialog();
+    if (!selected) return;
+    if (!selected.toLowerCase().endsWith(".pdf")) {
+      setLocalError("仅支持 PDF 文件");
+      return;
+    }
+    startTranslation(selected);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    if (isTauri()) return;
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setLocalError("仅支持 PDF 文件");
+      return;
+    }
+    const path = await uploadFile(file);
+    if (path) startTranslation(path);
+  };
+
+  return (
+    <div className="mx-auto max-w-3xl pt-8">
+      <Link
+        to="/"
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-sm font-medium text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+      >
+        ← 返回文档库
+      </Link>
+
+      <h1 className="mt-8 text-center text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl">
+        添加文献至你的阅读列表
+      </h1>
+
+      <div className="card mt-8 p-4 sm:p-5">
+        <p className="flex items-center gap-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4"
+            aria-hidden="true"
+          >
+            <path d="M12 16V4M7 9l5-5 5 5" />
+            <path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+          </svg>
+          上传本地文件
+        </p>
+
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label="拖入或选择 PDF 文件"
+          onClick={handleBrowse}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handleBrowse();
+            }
+          }}
+          onDragOver={(e) => {
+            if (isTauri()) return;
+            e.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={handleDrop}
+          className={`mt-3 flex h-64 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed transition-colors duration-150 sm:h-72 ${
+            isDragging
+              ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-900/20"
+              : "border-slate-300 hover:border-blue-400 dark:border-slate-600 dark:hover:border-blue-500"
+          }`}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-10 w-10 text-slate-300 dark:text-slate-600"
+            aria-hidden="true"
+          >
+            <path d="M14.5 3H7a1.5 1.5 0 0 0-1.5 1.5v15A1.5 1.5 0 0 0 7 21h10a1.5 1.5 0 0 0 1.5-1.5V7L14.5 3z" />
+            <path d="M14.5 3v4h4" />
+            <circle cx="12" cy="13" r="2.5" />
+            <path d="M12 11.5v3M10.75 13h2.5" />
+          </svg>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            将 PDF 拖放到这里，或{" "}
+            <span className="font-medium text-blue-600 hover:underline dark:text-blue-400">
+              点击上传
+            </span>
+          </p>
+          <p className="text-xs text-slate-400 dark:text-slate-500">
+            仅支持 PDF 文件 · 翻译完成后自动加入文档库
+          </p>
+        </div>
+
+        {localError && (
+          <p
+            role="alert"
+            className="mt-3 text-sm text-red-600 dark:text-red-400"
+          >
+            {localError}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}

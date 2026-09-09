@@ -1,8 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useConfigStore } from "../stores/configStore";
-import { usePdfStore } from "../stores/pdfStore";
-import { useUiStore } from "../stores/uiStore";
 import { AppConfig } from "../types";
 import { testApiConnection } from "../lib/bridge";
 import LoadingSpinner from "./common/LoadingSpinner";
@@ -211,8 +209,6 @@ function ApiSection({ title, value, presets, onChange, testMode, test, onTest, c
 
 export default function ConfigPage() {
   const { config, saveConfig, loadConfig } = useConfigStore();
-  const { pages } = usePdfStore();
-  const { mode } = useUiStore();
   const navigate = useNavigate();
   const [form, setForm] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
@@ -224,9 +220,12 @@ export default function ConfigPage() {
     text: { state: "idle", msg: "" },
   });
 
-  /** 返回目标：已有解析结果 → 回阅读页（跟随当前阅读模式）；否则回主页 */
-  const backTarget =
-    pages.length > 0 ? (mode === "inline" ? "/reader/inline" : "/reader/bilingual") : "/";
+  /** 返回目标：固定回主页（文献库）。
+   *  2026-09-09 页面逻辑重规划：导航层级为 文献库 ← 阅读页/设置页，
+   *  pdfStore 的 pages 在返回主页后仍驻留内存，若按「有结果就回阅读页」
+   *  判断，用户从主页进设置点返回会被弹回阅读页（返回循环 bug），
+   *  故不再依赖内存状态判断。 */
+  const backTarget = "/";
 
   useEffect(() => {
     loadConfig();
@@ -405,7 +404,7 @@ export default function ConfigPage() {
           <button
             onClick={() => navigate(backTarget)}
             className="btn-secondary"
-            title={backTarget === "/" ? "返回主页" : "返回阅读页"}
+            title="返回文献库"
           >
             ← 返回
           </button>

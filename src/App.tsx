@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import MainPage from "./components/MainPage";
+import AddArticlePage from "./components/AddArticlePage";
 import ConfigPage from "./components/ConfigPage";
 import BilingualPage from "./components/BilingualPage";
 import InlinePage from "./components/InlinePage";
@@ -43,6 +44,7 @@ function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<MainPage />} />
+          <Route path="/add" element={<AddArticlePage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route
             path="/reader/bilingual"

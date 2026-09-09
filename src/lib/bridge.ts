@@ -145,6 +145,21 @@ export async function moveDoc(docId: string, folderId: string | null): Promise<v
 }
 
 /**
+ * 前端日志上报（崩溃/未捕获异常）：落到后端 logs/frontend.log。
+ * 打包 exe 后没有控制台，这是排查崩溃的主要线索。静默失败（日志上报
+ * 本身绝不能再抛错干扰主流程）。
+ */
+export function logFrontend(level: "info" | "error", message: string): void {
+  apiFetch(`${API_BASE}/api/log`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ level, message }),
+  }).catch(() => {
+    /* 上报失败静默忽略 */
+  });
+}
+
+/**
  * 重开已翻译文档（阶段6-T3）：按 doc_id 让后端从缓存重建会话，
  * 零翻译 API 调用、秒开。源文件缺失时 file_exists=false（原版模式禁用）。
  */

@@ -3,6 +3,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useLibraryStore } from "../stores/libraryStore";
 import { useConfigStore } from "../stores/configStore";
 import { useUiStore } from "../stores/uiStore";
+import ConfirmDialog from "./common/ConfirmDialog";
 
 /**
  * 侧边栏（2026-09-09 靠岸学术风格一比一复刻）：
@@ -22,6 +23,11 @@ export default function Sidebar() {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  // 删除二次确认（Tauri WebView2 下 window.confirm 不可靠，必须自绘对话框）
+  const [pendingDelete, setPendingDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
 
   useEffect(() => {
     void fetchAll();
@@ -57,8 +63,10 @@ export default function Sidebar() {
     setEditing(null);
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!window.confirm(`删除文件夹「${name}」？其中的文献将回到未分类。`)) return;
+  const handleDelete = async () => {
+    if (!pendingDelete) return;
+    const { id } = pendingDelete;
+    setPendingDelete(null);
     await deleteFolder(id);
     // 正处在该文件夹视图时回文献库
     if (location.pathname === `/folder/${id}`) navigate("/");
@@ -220,7 +228,9 @@ export default function Sidebar() {
                     </svg>
                   </button>
                   <button
-                    onClick={() => void handleDelete(f.folder_id, f.name)}
+                    onClick={() =>
+                      setPendingDelete({ id: f.folder_id, name: f.name })
+                    }
                     title="删除文件夹"
                     aria-label={`删除文件夹 ${f.name}`}
                     className="rounded p-1 text-slate-400 transition-colors duration-150 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/40 dark:hover:text-red-400"
@@ -310,6 +320,17 @@ export default function Sidebar() {
           {theme === "dark" ? "亮色模式" : "暗色模式"}
         </button>
       </div>
+
+      {/* 删除文件夹二次确认 */}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`删除文件夹「${pendingDelete?.name ?? ""}」？`}
+        description="其中的文献不会被删除，将回到未分类。"
+        confirmText="删除"
+        danger
+        onConfirm={() => void handleDelete()}
+        onCancel={() => setPendingDelete(null)}
+      />
     </aside>
   );
 }

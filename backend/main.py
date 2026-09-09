@@ -6,6 +6,8 @@ import asyncio
 import base64
 import logging
 import struct
+import threading
+import time
 import zlib
 import uvicorn
 import os
@@ -419,6 +421,31 @@ async def api_open_doc(payload: dict):
         logger.exception("重开文档失败 doc_id=%s", doc_id)
         raise HTTPException(status_code=502, detail="重开文档失败，详见后端日志")
     return {**result, "doc": doc}
+
+
+# 前端日志上报：崩溃/未捕获异常落盘（打包 exe 无控制台，这是排查崩溃的主线索）
+_frontend_log_lock = threading.Lock()
+
+
+@app.post("/api/log")
+async def api_frontend_log(payload: dict):
+    """前端 window.onerror / unhandledrejection 上报，追加写 logs/frontend.log。"""
+    level = str(payload.get("level") or "info").upper()[:10]
+    message = str(payload.get("message") or "").replace("\n", " ")[:2000]
+    log_dir = os.path.join(settings.data_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} [{level}] {message}\n"
+    async with asyncio.to_thread(_append_frontend_log, log_dir, line):
+        pass
+    return {"ok": True}
+
+
+def _append_frontend_log(log_dir: str, line: str) -> None:
+    with _frontend_log_lock:
+        with open(
+            os.path.join(log_dir, "frontend.log"), "a", encoding="utf-8"
+        ) as f:
+            f.write(line)
 
 
 @app.post("/api/upload")

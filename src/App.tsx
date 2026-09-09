@@ -10,10 +10,32 @@ import { useUiStore } from "./stores/uiStore";
 import Layout from "./components/common/Layout";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import LoadingSpinner from "./components/common/LoadingSpinner";
+import { logFrontend } from "./lib/bridge";
 
 function App() {
   const { isConfigured, configLoaded, config, loadConfig } = useConfigStore();
   const { theme, setTheme } = useUiStore();
+
+  // 全局错误上报：渲染外未捕获的异常/Promise 拒绝落到后端 frontend.log，
+  // 打包 exe 无控制台时这是排查"页面崩溃"的主要线索（2026-09-09 用户反馈崩溃）
+  useEffect(() => {
+    const onError = (e: ErrorEvent) => {
+      logFrontend(
+        "error",
+        `window.onerror: ${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`,
+      );
+    };
+    const onRejection = (e: PromiseRejectionEvent) => {
+      const reason = e.reason instanceof Error ? `${e.reason.message}\n${e.reason.stack}` : String(e.reason);
+      logFrontend("error", `unhandledrejection: ${reason}`);
+    };
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
 
   // 阶段6-T1：启动时从 config.json（后端单一来源）灌入一次配置。
   // Key 已配置则 isConfigured 立即为真，主流程不再出现任何 Key 提示；

@@ -290,24 +290,48 @@ _GENERIC_HEADINGS = {
 
 
 def _extract_doc_title(pages: list) -> str:
-    """论文标题 = 首个非通用章节名的 # 标题块（管线与缓存重建共用）。
+    """论文标题（管线与缓存重建共用）。只在首页找，两级优先级：
 
-    去编号/冒号/强调符后小写比对通用章节名；全部命中则返回空串
-    （索引标题回退源文件名）。
+    1. 首个非通用章节名、无编号的 # 标题块（DALK 型：标题本身就是 heading）；
+    2. 首页首个正文块（TOG 型实测：标题是无 # 的独立全大写行，
+       "Published as a conference paper" 横幅已被切分噪音过滤剔除）。
+
+    通用章节名（Abstract 等）与编号章节头（"1 Introduction"、"2.1.2
+    EXPLORATION"）一律跳过；找不到返回空串（索引标题回退源文件名）。
     """
-    for page in pages:
-        for block in page["blocks"]:
-            m = re.match(r"^#\s+(.{4,120})$", (block.get("original") or "").strip())
-            if not m:
-                continue
-            text = m.group(1).strip()
-            norm = text.replace("*", "").replace("_", "").strip()
-            norm = norm.rstrip(":：").strip()
-            norm = re.sub(r"^\d+(\.\d+)*\s+", "", norm).lower()
-            if norm in _GENERIC_HEADINGS:
-                continue
-            return text
+    if not pages:
+        return ""
+    first = pages[0]
+    # 优先级 1：# 标题块（跳过通用章节名 / 编号章节头）
+    for block in first["blocks"]:
+        m = re.match(r"^#\s+(.{4,120})$", (block.get("original") or "").strip())
+        if not m:
+            continue
+        text = m.group(1).strip()
+        if _is_generic_heading(text):
+            continue
+        return text
+    # 优先级 2：首页首个正文块（跳过标题块/图片/结构块/通用名）
+    for block in first["blocks"]:
+        text = (block.get("original") or "").strip()
+        if not text or len(text) > 300 or text.startswith("#"):
+            continue
+        if _PURE_IMAGE.match(text) or not _is_plain(text):
+            continue
+        if _is_generic_heading(text):
+            continue
+        return text
     return ""
+
+
+def _is_generic_heading(text: str) -> bool:
+    """去强调符后比对通用章节名；多级编号章节头（"2.1.2 X"）直接判非标题。"""
+    if re.match(r"^\d+(\.\d+)+\s", text.replace("*", "").strip()):
+        return True
+    norm = text.replace("*", "").replace("_", "").strip()
+    norm = norm.rstrip(":：").strip()
+    norm = re.sub(r"^\d+(\.\d+)*\s+", "", norm).lower()
+    return norm in _GENERIC_HEADINGS
 
 
 def _remove_running_header(pages: list, doc_title: str) -> None:
@@ -783,8 +807,10 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
                 settings.data_dir,
                 {
                     "doc_id": pdf_hash[:16],
-                    "title": doc_title
-                    or os.path.splitext(os.path.basename(file_path))[0],
+                    # 2026-09-09 用户决策：索引标题直接用上传文件名（去 .pdf），
+                    # 想改名就改文件名。提取的 doc_title 只用于术语表提示词
+                    # 与页眉剔除，不再决定卡片标题。
+                    "title": os.path.splitext(os.path.basename(file_path))[0],
                     "file_path": os.path.abspath(file_path),
                     "pdf_hash": pdf_hash,
                     "page_count": len(pages),

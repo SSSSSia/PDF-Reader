@@ -118,3 +118,32 @@ def test_extract_doc_title_skips_generic_headings():
     assert _extract_doc_title(mk(["# 1 Introduction", "# Results: all good"])) == "Results: all good"
     # 全部是通用章节名 → 空串（索引回退文件名）
     assert _extract_doc_title(mk(["# Abstract", "# References"])) == ""
+
+
+def test_extract_doc_title_plain_text_title_tog_style():
+    """TOG 型：标题是无 # 的独立全大写行，唯一 # 标题是 ABSTRACT（通用名）。"""
+    from pipeline.processor import _extract_doc_title
+
+    pages = [{
+        "page": 0,
+        "blocks": [
+            {"original": "THINK-ON-GRAPH: DEEP AND RESPONSIBLE REASONING OF LLM ON KG"},
+            {"original": "# ABSTRACT"},
+            {"original": "Although large language models have achieved success..."},
+        ],
+    }]
+    assert _extract_doc_title(pages) == "THINK-ON-GRAPH: DEEP AND RESPONSIBLE REASONING OF LLM ON KG"
+
+
+def test_extract_doc_title_rejects_numbered_section_heading():
+    """编号章节头（2.1.2 X）不是标题：跳过后取首页首个正文块。"""
+    from pipeline.processor import _extract_doc_title
+
+    pages = [{
+        "page": 0,
+        "blocks": [
+            {"original": "# 2.1.2 EXPLORATION"},
+            {"original": "Think-on-Graph performs beam search on knowledge graphs."},
+        ],
+    }]
+    assert _extract_doc_title(pages) == "Think-on-Graph performs beam search on knowledge graphs."

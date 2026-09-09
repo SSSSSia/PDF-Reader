@@ -138,7 +138,7 @@ export default function ReaderToolbar() {
             title={
               sourceMissing
                 ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
-                : "原版版式左栏 + 译文右栏对齐阅读（开发中，阶段7-T4）"
+                : "原版版式左栏 + 译文右栏对齐阅读"
             }
             onClick={() =>
               setReaderMode(
@@ -154,6 +154,30 @@ export default function ReaderToolbar() {
             }`}
           >
             左右对照
+          </button>
+          <button
+            role="tab"
+            aria-selected={readerMode === "original_replace"}
+            disabled={sourceMissing}
+            title={
+              sourceMissing
+                ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
+                : "段落原位替换为译文，版式不变（悬停看原文）"
+            }
+            onClick={() =>
+              setReaderMode(
+                readerMode === "original_replace"
+                  ? "parallel"
+                  : "original_replace"
+              )
+            }
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
+              readerMode === "original_replace"
+                ? "bg-white text-blue-700 shadow-sm dark:bg-slate-700 dark:text-blue-300"
+                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            }`}
+          >
+            原文替换
           </button>
         </div>
         {/* 阶段7-T1/T2 全局缩放：三形态共用；百分比重置回形态缺省

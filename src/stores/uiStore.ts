@@ -1,13 +1,16 @@
 import { create } from "zustand";
 
-/** readerMode（阶段5-T2/D6 立项，阶段7-T3 分组扩展）：
+/** readerMode（阶段5-T2/D6 立项，阶段7-T3 分组扩展，T6 新增替换视图）：
  *  parallel = 重排版（bilingual/inline 由 mode 决定）；
  *  original_click = 原版PDF·点击翻译（pdfjs 渲染 + 块坐标译文浮层）；
- *  original_bilingual = 原版PDF·左右对照（左 pdfjs 右译文，阶段7-T4 实现）。 */
+ *  original_bilingual = 原版PDF·左右对照（左 pdfjs 右译文，阶段7-T4）；
+ *  original_replace = 原版PDF·原文替换（bbox 区域原地盖译文层，阶段7-T6，
+ *  源于用户 2026-09-09 需求澄清："译文也是 PDF 排版，段落原地替换"）。 */
 export type ReaderMode =
   | "parallel"
   | "original_click"
-  | "original_bilingual";
+  | "original_bilingual"
+  | "original_replace";
 
 /** 阶段7-T1 全局缩放：0.7–2.0、步进 0.1。阅读偏好（非 API 配置），
  *  按任务约定走 localStorage（`pdf-reader.zoom`），不进 config.json。 */

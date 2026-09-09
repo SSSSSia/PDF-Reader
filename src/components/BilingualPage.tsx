@@ -11,6 +11,7 @@ import ReaderToolbar from "./ReaderToolbar";
 import ReaderTabs from "./ReaderTabs";
 import OriginalReader from "./OriginalReader";
 import OriginalBilingualPage from "./OriginalBilingualPage";
+import OriginalReplacePage from "./OriginalReplacePage";
 
 /**
  * 左右对照模式：整篇连续滚动（无分页，对标 Scholaread，用户决策 2026-09-06）。
@@ -85,11 +86,13 @@ export default function BilingualPage() {
       )}
 
       {/* 原版PDF 组（阶段7-T3 分组）：点击翻译=pdfjs 原样渲染 + 块坐标译文浮层；
-          左右对照=T4 左渲染右译文锚定对照；进度条仍常驻上方 */}
+          左右对照=T4 左渲染右译文锚定对照；原文替换=T6 bbox 原地盖译文层 */}
       {readerMode === "original_click" ? (
         <OriginalReader />
       ) : readerMode === "original_bilingual" ? (
         <OriginalBilingualPage />
+      ) : readerMode === "original_replace" ? (
+        <OriginalReplacePage />
       ) : (
       /* 整篇单列滚动：所有页的 block 按文档顺序连续排布 */
       <div className="h-[calc(100vh-170px)] overflow-y-auto">

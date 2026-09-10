@@ -141,10 +141,9 @@ export default function OriginalBilingualPage() {
     <div
       ref={zoomRef}
       className="h-[calc(100vh-170px)]"
-      /* 译文字号与 zoom 解耦（2026-09-10 用户反馈"一放大就看不到一部分"）：
-         zoom 的本意是放大原版 PDF，译文若同步缩放，120% 时达 14.4px 内容
-         暴涨溢出。固定 0.75rem（12px）；连带收益：放大时左页变高而右栏
-         内容不变，级联漂移自然收敛 */
+      /* 译文字号策略（2026-09-10 用户决策"字号跟随原块"）：每段字号按原块
+         渲染几何估算（见 MirrorPage segFont），随 zoom 与原版同步缩放——
+         BabelDOC 式视觉对位；根值 0.75 仅为未命中段的兜底 */
       style={{ "--reader-zoom": 0.75 } as React.CSSProperties}
     >
       <div className="flex h-full flex-col gap-3 md:flex-row">
@@ -416,6 +415,17 @@ function MirrorPage({
     cursorY = top + (heights[i] ?? 0);
     return { a, top, i };
   });
+  // 字号跟随原块（2026-09-10 用户决策）：由原块几何反解字号——行数模型
+  // lines = len×0.55×fontSize / blockW，块高 = lines×fontSize×1.25，联立得
+  // fontSize = √(块高×blockW / (0.55×1.25×len))。锚点坐标已含 zoom 缩放，
+  // 字号随 zoom 与原版同步放大（BabelDOC 行为）；公式块走 KaTeX 固定字号。
+  const segFont = (a: Anchor) => {
+    const h = (a.bb[3] - a.bb[1]) * scale!;
+    const w = Math.max(60, (a.bb[2] - a.bb[0]) * scale!);
+    const len = Math.max(12, (a.block.original ?? "").trim().length);
+    const est = Math.sqrt((h * w) / (0.55 * 1.25 * len));
+    return Math.min(18, Math.max(6.5, est));
+  };
   // 占位高度：镜像左栏版面，但尾部卡片超出页底时随之撑高（不截断译文）
   const contentH = layout ? Math.max(layout.h, cursorY) : undefined;
 
@@ -481,7 +491,8 @@ function MirrorPage({
                   top,
                   left: 0,
                   right: 0,
-                  fontSize: "0.75rem",
+                  /* prose 根字号 = 1rem × var(--reader-zoom)，按段注入估算字号 */
+                  ...({ "--reader-zoom": a.block.formula_hint ? 0.75 : segFont(a) / 16 } as React.CSSProperties),
                 }}
               >
                 {/* 操作按钮悬浮显示（hover 才出现），不占版面高度 */}

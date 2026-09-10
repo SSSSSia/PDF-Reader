@@ -140,7 +140,7 @@ export default function OriginalBilingualPage() {
   return (
     <div
       ref={zoomRef}
-      className="h-[calc(100vh-170px)]"
+      className="flex min-h-0 flex-1 flex-col"
       /* 译文字号策略（2026-09-10 用户决策"字号跟随原块"）：每段字号按原块
          渲染几何估算（见 MirrorPage segFont），随 zoom 与原版同步缩放——
          BabelDOC 式视觉对位；根值 0.75 仅为未命中段的兜底 */

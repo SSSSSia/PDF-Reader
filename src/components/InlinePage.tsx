@@ -49,8 +49,9 @@ export default function InlinePage() {
     );
   }
 
+  /* 阶段10-T4：阅读页=纵向 flex 壳层（工具栏/页签/进度 shrink-0，内容通顶滚动） */
   return (
-    <div ref={zoomRef}>
+    <div ref={zoomRef} className="flex h-full min-h-0 flex-col">
       <ReaderToolbar />
       <ReaderTabs />
 
@@ -90,7 +91,7 @@ export default function InlinePage() {
         <OriginalBilingualPage />
       ) : (
       /* 整篇连续文档流：所有页的 block 按文档顺序排布 */
-      <div className="h-[calc(100vh-170px)] overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div
           className="mx-auto max-w-4xl px-2 pb-16"
           style={{ "--reader-zoom": zoom } as CSSProperties}

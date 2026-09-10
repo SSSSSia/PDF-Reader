@@ -22,6 +22,9 @@
     },
     {
       "identifier": "shell:allow-open"
-    }
+    },
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close"
   ]
 }

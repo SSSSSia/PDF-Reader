@@ -44,7 +44,9 @@ export default function ReaderToolbar() {
   const originalActive = readerMode !== "parallel";
 
   return (
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+      {/* 阶段10：Tauri 下返回主页/文档标题在自绘标题栏，此处仅浏览器 dev 保留 */}
+      {"__TAURI_INTERNALS__" in window ? null : (
       <div className="flex min-w-0 items-center gap-3">
         <Link
           to="/"
@@ -62,6 +64,7 @@ export default function ReaderToolbar() {
           </span>
         )}
       </div>
+      )}
       <div className="flex flex-wrap items-center justify-end gap-3">
         {/* 阶段7-T3 分组选择器（mockup 方案 A）：组名为非交互标签、竖线分隔两组 */}
         <div

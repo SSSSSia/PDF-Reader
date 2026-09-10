@@ -52,7 +52,8 @@ export default function BilingualPage() {
   }
 
   return (
-    <div ref={zoomRef}>
+    /* 阶段10-T4：阅读页=纵向 flex 壳层（工具栏/页签/进度 shrink-0，内容通顶滚动） */
+    <div ref={zoomRef} className="flex h-full min-h-0 flex-col">
       <ReaderToolbar />
       <ReaderTabs />
 
@@ -92,7 +93,7 @@ export default function BilingualPage() {
         <OriginalBilingualPage />
       ) : (
       /* 整篇单列滚动：所有页的 block 按文档顺序连续排布 */
-      <div className="h-[calc(100vh-170px)] overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div
           className="mx-auto max-w-6xl"
           style={{ "--reader-zoom": zoom } as CSSProperties}

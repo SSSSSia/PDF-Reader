@@ -83,10 +83,10 @@ export default function OriginalReader() {
     /* 外层 wrapper 挂 Ctrl+滚轮缩放 hook（事件冒泡至此监听，
        preventDefault 仍可拦 WebView2 页面缩放）；内层滚动容器
        的 wrapRef 专职 wrapW 测量（fit-width 基准，一个节点一个 ref） */
-    <div ref={zoomRef}>
+    <div ref={zoomRef} className="flex h-full min-h-0 flex-col">
       <div
         ref={wrapRef}
-        className="relative h-[calc(100vh-170px)] overflow-auto bg-slate-200 dark:bg-slate-950"
+        className="relative min-h-0 flex-1 overflow-auto bg-slate-200 dark:bg-slate-950"
       >
       {/* 缩放走工具栏统一控件（阶段7-T1）：此处不再放重复的 ± 控件。
           「点高亮块看译文」操作提示保留为纯文字小条。 */}

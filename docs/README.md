@@ -70,5 +70,5 @@ docs/
 - **阶段 7 阅读体验增强进行中（2026-09-09 启动，T1 全局缩放完成）**：Ctrl+滚轮/工具栏 ± 三形态统一缩放（0.7–2.0、步进 0.1、localStorage 持久化）；重排版走 `--reader-zoom` CSS 变量缩 prose 根字号，原版走 pdfjs scale。T2–T5 见阶段 7 文档
 - **阶段 8 多会话阅读与后台翻译开发完成待人工验收（2026-09-09）**：结论——后端并发能力已具备（多 job 并发 + 无状态缓存重开），瓶颈在前端单会话 pdfStore；落地为会话注册表 + 快照交换（阅读组件零改动）+ translationManager 后台轮询 + ReaderTabs 页签条，翻译期互斥解除。自动化回归全过（tsc/build/pytest 143），人工验收清单见阶段 8 文档 §4
 - **阶段 10 桌面沉浸化开发完成待人工验收（2026-09-09，commit 02b5886）**：自绘标题栏（logo 返回主页/页面标题/窗口三钮/拖拽双击最大化）+ 布局壳层通顶改造（滚动区 +114px）；浏览器冒烟通过，**需 tauri dev 验收**
-- **阶段 9 BabelDOC 双语 PDF 进行中（2026-09-10，T0+T1-T3 完成，commit a0a05e3）**：T0 决策门通过（CLI 实测）；后端 `backend/export/` 导出服务（worker 子进程直调 Python API + 产物看门狗绕 finish 事件挂死 + 幂等缓存/取消）；前端「双语PDF」按钮全生命周期（进度%→打开产物）。T4（429 退避/大文档分批）、T5（AGPL 合规）待做
+- **阶段 9 BabelDOC 双语 PDF 进行中（2026-09-10，T0+T1-T3 完成）**：T0 决策门通过（CLI 实测）；后端 `backend/export/` 导出服务（worker 子进程直调 Python API + 产物看门狗绕 finish 事件挂死 + 幂等缓存/取消）。**同日验收决策重定位（T3'，commit a900794）：双语PDF 不是导出附件，「原版PDF·左右对照」模式 = DualPdfPage（幂等生成 → pdfjs 应用内渲染 dual PDF）**，旧自绘 overlay 对照退役。T4（429 退避/大文档分批）、T5（AGPL 合规）待做
 - 历史详情见 `重构路线图.md` 状态跟踪表

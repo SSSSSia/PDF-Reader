@@ -38,3 +38,4 @@ vite.config.ts.timestamp-*
 # 后端开发日志（dev-start.ps1 重定向输出）
 logs/
 .venv-babeldoc/
+.venv-babeldoc/

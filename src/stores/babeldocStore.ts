@@ -10,6 +10,7 @@ import { create } from "zustand";
 import {
   startBabeldocExport,
   getBabeldocStatus,
+  cancelBabeldoc,
   type BabelDocJob,
 } from "../lib/bridge";
 
@@ -28,6 +29,8 @@ interface BabelDocState {
   /** 当前文件路径（判断点击时是否换了一篇文档） */
   filePath: string | null;
   start: (filePath: string) => Promise<void>;
+  /** 取消进行中的任务（后端 kill 子进程；轮询会把状态收敛为 idle） */
+  cancel: (jobId: string) => Promise<void>;
   /** 点按已完成状态：由调用方（按钮）决定打开产物 */
   clearError: () => void;
   /** 内部：应用后端 job 快照（下划线约定为非公开） */
@@ -86,6 +89,14 @@ export const useBabelDocStore = create<BabelDocState>((set, get) => ({
   },
 
   clearError: () => set({ phase: "idle", error: "", progress: 0, stage: "" }),
+
+  cancel: async (jobId: string) => {
+    try {
+      await cancelBabeldoc(jobId);
+    } catch {
+      /* 取消失败不阻塞 UI：任务可能刚好完成，轮询会收敛 */
+    }
+  },
 
   /** 内部：把后端 job 快照落到 store（下划线约定为非公开 action） */
   _applyJob(job: BabelDocJob) {

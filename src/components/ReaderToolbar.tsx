@@ -6,24 +6,25 @@ import {
   ZOOM_MIN,
   ZOOM_ORIGINAL_DEFAULT,
 } from "../stores/uiStore";
+import { useConfigStore } from "../stores/configStore";
 import { usePdfStore } from "../stores/pdfStore";
 import ExportBar from "./ExportBar";
-import BabelDocButton from "./BabelDocButton";
 
 /**
- * 阅读页共享工具栏：「← 文档库」返回 + 文章标题 ｜ 阅读模式切换（分段控件）+ 缩放 + 导出。
- * 由 BilingualPage 与 InlinePage 共用，保证两个视图工具栏完全一致。
- * 注：原 PdfViewer 页码导航已随「整篇连续滚动」改版移除（用户决策 2026-09-06）。
- * 阶段6-T3：源 PDF 缺失（从主页重开已删/移动的文档）时「原版PDF」组禁用并提示。
- * 2026-09-09 页面逻辑重规划：顶栏左侧常驻「← 文档库」返回 + 当前文章标题。
- * 阶段7-T1：全局缩放控件（−/百分比/＋，与 Ctrl+滚轮共用 uiStore.zoom 并持久化）。
- * 阶段7-T3：模式选择器分「重排版」「原版PDF」两组（mockup 方案 A，用户 2026-09-09
- * 确认）——组名嵌在控件内作非交互标签、竖线分隔；原版PDF 组含点击翻译（original_click）
- * 与左右对照（original_bilingual，T4 双栏面板）；点击已选中的原版按钮切回重排版（沿用旧 toggle 习惯）。
+ * 阅读页共享工具栏（阶段10 二次改造 2026-09-10，mockup 方案 A 用户确认）：
+ * 通栏底色条（与标题栏同族）+ 三段式——左「← 文档库」、中模式分段控件居中、
+ * 右缩放/主题/导出组。
+ * - 由 BilingualPage 与 InlinePage 共用，保证两个视图工具栏完全一致。
+ * - 阶段6-T3：源 PDF 缺失（重开已删/移动文档）时「原版PDF」组禁用并提示。
+ * - 阶段7-T1：全局缩放控件（−/百分比/＋，与 Ctrl+滚轮共用 uiStore.zoom 并持久化）。
+ * - 阶段7-T3：模式选择器分「重排版」「原版PDF」两组（组名嵌控件内非交互标签）；
+ *   2026-09-10 验收决策：原版PDF·左右对照 = BabelDOC 排版对照（DualPdfPage）。
+ * - 原页内页签条在 Tauri 下已升格进标题栏；浏览器 dev 由 ReaderTabs 渲染。
  */
 export default function ReaderToolbar() {
-  const { mode, setMode, readerMode, setReaderMode, zoom: zoomRaw, stepZoom, resetZoom } =
+  const { mode, setMode, readerMode, setReaderMode, zoom: zoomRaw, stepZoom, resetZoom, theme, setTheme, toggleTheme } =
     useUiStore();
+  const { setTheme: saveTheme } = useConfigStore();
   const { filePath, file } = usePdfStore();
   const navigate = useNavigate();
   const sourceMissing = !filePath;
@@ -44,124 +45,121 @@ export default function ReaderToolbar() {
   // 原版PDF 组（两种形态任一激活）：缩放缺省/重置提示均按原版语义
   const originalActive = readerMode !== "parallel";
 
+  // 暗色切换（阶段10 回归修复：阅读页无侧边栏，入口移到本工具栏），
+  // 持久化与主页一致走 config.json ui.theme
+  const handleToggleTheme = async () => {
+    const next = theme === "dark" ? "light" : "dark";
+    toggleTheme();
+    setTheme(next);
+    await saveTheme(next);
+  };
+
+  const segBtn = (active: boolean) =>
+    `rounded-md px-3 py-1 text-sm font-medium transition-colors duration-150 ${
+      active
+        ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+    }`;
+
   return (
-    <div className="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
-      {/* 阶段10：Tauri 下返回主页/文档标题在自绘标题栏，此处仅浏览器 dev 保留 */}
-      {"__TAURI_INTERNALS__" in window ? null : (
-      <div className="flex min-w-0 items-center gap-3">
-        <Link
-          to="/"
-          className="shrink-0 rounded-md px-2 py-1.5 text-sm font-medium text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-          title="返回文档库（翻译结果保留，可直接再进入）"
-        >
-          ← 文档库
-        </Link>
-        {docTitle && (
-          <span
-            className="min-w-0 truncate text-sm font-medium text-slate-700 dark:text-slate-300"
-            title={docTitle}
+    <div className="flex h-12 shrink-0 items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 dark:border-slate-700 dark:bg-slate-900">
+      {/* 左：返回文档库（Tauri 下标题栏 logo 承担返回，此处仅浏览器 dev 显示） */}
+      <div className="flex min-w-0 flex-1 items-center">
+        {"__TAURI_INTERNALS__" in window ? null : (
+          <Link
+            to="/"
+            className="shrink-0 rounded-md px-2 py-1.5 text-sm font-medium text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+            title="返回文档库（翻译结果保留，可直接再进入）"
           >
-            {docTitle}
-          </span>
+            ← 文档库
+          </Link>
         )}
       </div>
-      )}
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        {/* 阶段7-T3 分组选择器（mockup 方案 A）：组名为非交互标签、竖线分隔两组 */}
-        <div
-          className="inline-flex items-center rounded-lg bg-slate-100 p-1 dark:bg-slate-800"
-          role="tablist"
-          aria-label="阅读模式"
+
+      {/* 中：模式分段控件（mockup 方案 A 居中为主角） */}
+      <div
+        className="inline-flex shrink-0 items-center rounded-lg border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800"
+        role="tablist"
+        aria-label="阅读模式"
+      >
+        <span
+          aria-hidden="true"
+          className="select-none px-2 text-xs text-slate-400 dark:text-slate-500"
         >
-          <span
-            aria-hidden="true"
-            className="select-none px-2.5 text-xs text-slate-400 dark:text-slate-500"
-          >
-            重排版
-          </span>
-          <button
-            role="tab"
-            aria-selected={!originalActive && mode === "bilingual"}
-            onClick={() => switchMode("bilingual")}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
-              !originalActive && mode === "bilingual"
-                ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
-                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            左右对照
-          </button>
-          <button
-            role="tab"
-            aria-selected={!originalActive && mode === "inline"}
-            onClick={() => switchMode("inline")}
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 ${
-              !originalActive && mode === "inline"
-                ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
-                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            紧跟模式
-          </button>
-          <span
-            aria-hidden="true"
-            className="mx-1.5 h-5 w-px shrink-0 bg-slate-300 dark:bg-slate-600"
-          />
-          <span
-            aria-hidden="true"
-            className="select-none px-2.5 text-xs text-slate-400 dark:text-slate-500"
-          >
-            原版PDF
-          </span>
-          <button
-            role="tab"
-            aria-selected={readerMode === "original_bilingual"}
-            disabled={sourceMissing}
-            title={
-              sourceMissing
-                ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
-                : "原版版式左栏 + 译文右栏对齐阅读"
-            }
-            onClick={() =>
-              setReaderMode(
-                readerMode === "original_bilingual"
-                  ? "parallel"
-                  : "original_bilingual"
-              )
-            }
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
+          重排版
+        </span>
+        <button
+          role="tab"
+          aria-selected={!originalActive && mode === "bilingual"}
+          onClick={() => switchMode("bilingual")}
+          className={segBtn(!originalActive && mode === "bilingual")}
+        >
+          左右对照
+        </button>
+        <button
+          role="tab"
+          aria-selected={!originalActive && mode === "inline"}
+          onClick={() => switchMode("inline")}
+          className={segBtn(!originalActive && mode === "inline")}
+        >
+          紧跟模式
+        </button>
+        <span
+          aria-hidden="true"
+          className="mx-1 h-5 w-px shrink-0 bg-slate-200 dark:bg-slate-600"
+        />
+        <span
+          aria-hidden="true"
+          className="select-none px-2 text-xs text-slate-400 dark:text-slate-500"
+        >
+          原版PDF
+        </span>
+        <button
+          role="tab"
+          aria-selected={readerMode === "original_bilingual"}
+          disabled={sourceMissing}
+          title={
+            sourceMissing
+              ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
+              : "BabelDOC 排版对照：整篇双语 PDF 应用内渲染（首次生成需翻译，之后秒开）"
+          }
+          onClick={() =>
+            setReaderMode(
               readerMode === "original_bilingual"
-                ? "bg-white text-blue-700 shadow-sm dark:bg-slate-700 dark:text-blue-300"
-                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            左右对照
-          </button>
-          <button
-            role="tab"
-            aria-selected={readerMode === "original_click"}
-            disabled={sourceMissing}
-            title={
-              sourceMissing
-                ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
-                : "按原版排版，点击高亮块查看译文（已选中时点击切回重排版）"
-            }
-            onClick={() =>
-              setReaderMode(
-                readerMode === "original_click" ? "parallel" : "original_click"
-              )
-            }
-            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
-              readerMode === "original_click"
-                ? "bg-white text-blue-700 shadow-sm dark:bg-slate-700 dark:text-blue-300"
-                : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
-            }`}
-          >
-            点击翻译
-          </button>
-        </div>
-        {/* 阶段7-T1/T2 全局缩放：三形态共用；百分比重置回形态缺省
-            （原版 70% / 重排版 100%，并清除持久化） */}
+                ? "parallel"
+                : "original_bilingual"
+            )
+          }
+          className={`rounded-md px-3 py-1 text-sm font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 ${
+            readerMode === "original_bilingual"
+              ? "bg-white text-blue-700 shadow-sm ring-1 ring-slate-200 dark:bg-slate-700 dark:text-blue-300 dark:ring-slate-600"
+              : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+          }`}
+        >
+          左右对照
+        </button>
+        <button
+          role="tab"
+          aria-selected={readerMode === "original_click"}
+          disabled={sourceMissing}
+          title={
+            sourceMissing
+              ? "源 PDF 已移动/删除，原版模式不可用（对照/紧跟不受影响）"
+              : "按原版排版，点击高亮块查看译文（已选中时点击切回重排版）"
+          }
+          onClick={() =>
+            setReaderMode(
+              readerMode === "original_click" ? "parallel" : "original_click"
+            )
+          }
+          className={segBtn(readerMode === "original_click")}
+        >
+          点击翻译
+        </button>
+      </div>
+
+      {/* 右：缩放 / 主题 / 导出 */}
+      <div className="flex flex-1 shrink-0 items-center justify-end gap-2">
         <div
           className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-1 py-0.5 dark:border-slate-700 dark:bg-slate-800"
           role="group"
@@ -197,8 +195,15 @@ export default function ReaderToolbar() {
             ＋
           </button>
         </div>
-        {/* 阶段9-T2：BabelDOC 整篇双语 PDF 导出（同页并排，系统阅读器打开） */}
-        <BabelDocButton />
+        {/* 阶段10 回归修复：阅读页主题切换入口（原在侧边栏） */}
+        <button
+          onClick={handleToggleTheme}
+          title={theme === "dark" ? "切换到亮色" : "切换到暗色"}
+          aria-label={theme === "dark" ? "切换到亮色" : "切换到暗色"}
+          className="h-8 w-8 shrink-0 rounded-lg border border-slate-200 bg-white text-sm leading-none text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+        >
+          {theme === "dark" ? "🌞" : "🌙"}
+        </button>
         <ExportBar />
       </div>
     </div>

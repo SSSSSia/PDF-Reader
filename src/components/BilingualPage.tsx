@@ -10,7 +10,7 @@ import FormulaButton from "./common/FormulaButton";
 import ReaderToolbar from "./ReaderToolbar";
 import ReaderTabs from "./ReaderTabs";
 import OriginalReader from "./OriginalReader";
-import OriginalBilingualPage from "./OriginalBilingualPage";
+import DualPdfPage from "./DualPdfPage";
 
 /**
  * 左右对照模式：整篇连续滚动（无分页，对标 Scholaread，用户决策 2026-09-06）。
@@ -90,7 +90,7 @@ export default function BilingualPage() {
       {readerMode === "original_click" ? (
         <OriginalReader />
       ) : readerMode === "original_bilingual" ? (
-        <OriginalBilingualPage />
+        <DualPdfPage />
       ) : (
       /* 整篇单列滚动：所有页的 block 按文档顺序连续排布 */
       <div className="min-h-0 flex-1 overflow-y-auto">

@@ -15,6 +15,10 @@ export default function ReaderTabs() {
   const sessionKey = usePdfStore((s) => s.sessionKey);
   const navigate = useNavigate();
 
+  // 2026-09-10 验收决策：Tauri 下页签升格进自绘标题栏（TitleBar 多开 tab），
+  // 本组件仅浏览器 dev 渲染
+  if ("__TAURI_INTERNALS__" in window) return null;
+
   // 按创建顺序稳定排列
   const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
   if (ordered.length < 2) return null;

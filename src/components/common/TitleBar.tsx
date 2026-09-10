@@ -1,21 +1,28 @@
 import { useEffect, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { usePdfStore } from "../../stores/pdfStore";
+import { useSessionsStore } from "../../stores/sessionsStore";
 
 /**
- * 自绘标题栏（阶段10-T3，2026-09-10 用户确认 mockup v3/v4）：
- * 同靠岸学术——标题栏只含「应用 logo（点击返回主页）+ 页面标题 + 窗口三钮」，
- * 功能按钮在下方工具栏（ReaderToolbar，第二行）；主页/阅读页共用本栏。
- *
- * - 仅 Tauri 环境渲染（浏览器 dev 无 decorations:false，无需窗口钮）
- * - 整栏为拖拽区（data-tauri-drag-region），按钮区 stopPropagation
+ * 自绘标题栏（阶段10-T3；2026-09-10 验收反馈二次改造）：
+ * 靠岸学术式——标题栏 = 「应用 logo + 文章多开 tab + 窗口三钮」。
+ * - tab = 阶段8 会话注册表中的每篇打开文献/翻译任务：点击切换、× 关闭、
+ *   「+」回主页新开；后台 tab 挂起保留翻译进度（进度徽标）。
+ * - 原 ReaderTabs 页签条在 Tauri 下退役（由本栏承担）；浏览器 dev 保留。
+ * - 仅 Tauri 环境渲染整栏（浏览器 dev 无 decorations:false，无需窗口钮）
+ * - 整栏为拖拽区（data-tauri-drag-region，权限 core:window:allow-start-dragging
+ *   ——2026-09-10 验收发现漏权限导致窗口拖不动，已补 capability）
  * - 双击最大化切换；关闭钮 hover 红色语义（桌面软件惯例）
- * - 权限：core:window:allow-minimize/toggle-maximize/close（capability 已放行）
  */
 export default function TitleBar() {
   const isTauri = "__TAURI_INTERNALS__" in window;
   const location = useLocation();
+  const navigate = useNavigate();
   const file = usePdfStore((s) => s.file);
+  const sessionKey = usePdfStore((s) => s.sessionKey);
+  const sessions = useSessionsStore((s) => s.sessions);
+  const activate = useSessionsStore((s) => s.activate);
+  const closeSession = useSessionsStore((s) => s.close);
   const [maximized, setMaximized] = useState(false);
   const [win, setWin] = useState<{
     minimize: () => void;
@@ -41,7 +48,7 @@ export default function TitleBar() {
       .catch(() => setWin(null));
   }, [isTauri]);
 
-  // 页面标题：阅读页=文档名（去 .pdf），主页/设置=对应文案
+  // 页面标题：无会话 tab 时的兜底显示（主页/设置/添加文献/单篇阅读）
   const isReader = location.pathname.startsWith("/reader");
   const docTitle = (file?.name ?? "").replace(/\.pdf$/i, "");
   const pageTitle = isReader
@@ -54,6 +61,19 @@ export default function TitleBar() {
 
   if (!isTauri) return null;
 
+  // tab 按创建顺序稳定排列；与页内页签同源（会话注册表）
+  const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
+
+  const handleActivate = (key: string) => {
+    if (activate(key) && !isReader) navigate("/reader/bilingual");
+  };
+
+  const handleClose = (key: string, running: boolean) => {
+    if (running) return; // 翻译中不可关闭（同旧页签约定）
+    const next = closeSession(key);
+    if (next === null) navigate("/");
+  };
+
   const btn =
     "flex h-full w-11 items-center justify-center text-sm text-slate-500 transition-colors duration-150 hover:bg-slate-200 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100";
 
@@ -61,12 +81,12 @@ export default function TitleBar() {
     <div
       data-tauri-drag-region
       onDoubleClick={() => win?.toggleMaximize()}
-      className="flex h-9 shrink-0 select-none items-center gap-2 border-b border-slate-200 bg-slate-50 pl-3 dark:border-slate-700 dark:bg-slate-900"
+      className="flex h-10 shrink-0 select-none items-center gap-1 border-b border-slate-200 bg-slate-50 pl-2.5 dark:border-slate-700 dark:bg-slate-900"
     >
-      {/* logo + 应用名：点击返回主页（同靠岸学术） */}
+      {/* logo：点击返回主页（同靠岸学术） */}
       <Link
         to="/"
-        className="flex items-center gap-1.5 rounded px-1 py-0.5"
+        className="flex shrink-0 items-center gap-1.5 rounded px-1 py-0.5"
         title="返回主页"
       >
         <span
@@ -75,18 +95,101 @@ export default function TitleBar() {
         >
           译
         </span>
-        <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
-          PDF双语阅读器
-        </span>
       </Link>
-      {/* 页面标题（阅读页=文档名，超长省略） */}
-      <span className="text-xs text-slate-400 dark:text-slate-500">/</span>
-      <span
-        className="min-w-0 max-w-[45%] truncate text-xs text-slate-700 dark:text-slate-200"
-        title={pageTitle}
-      >
-        {pageTitle}
-      </span>
+
+      {/* 文章多开 tab（会话注册表）：点击切换 / × 关闭；无会话时回退页面标题 */}
+      {ordered.length > 0 ? (
+        <div className="flex h-full min-w-0 flex-1 items-stretch overflow-x-auto">
+          {ordered.map((s) => {
+            const active = s.key === sessionKey;
+            const running = s.job?.status === "running";
+            const failed = s.job?.status === "failed";
+            return (
+              <div
+                key={s.key}
+                role="tab"
+                aria-selected={active}
+                tabIndex={0}
+                onClick={() => handleActivate(s.key)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleActivate(s.key);
+                  }
+                }}
+                title={running ? `翻译中 ${Math.round(s.job?.progress ?? 0)}%` : s.title}
+                className={`group flex max-w-[13rem] shrink-0 cursor-pointer items-center gap-1.5 border-r border-slate-200 px-3 text-xs transition-colors duration-150 dark:border-slate-700 ${
+                  active
+                    ? "border-t-2 border-t-blue-600 bg-white font-medium text-slate-900 dark:bg-slate-800 dark:text-slate-100"
+                    : "border-t-2 border-t-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-200"
+                }`}
+              >
+                {running && (
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-blue-500"
+                    aria-hidden="true"
+                  />
+                )}
+                {failed && (
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500"
+                    aria-hidden="true"
+                  />
+                )}
+                <span className="truncate">{s.title}</span>
+                {running ? (
+                  <span className="shrink-0 text-[10px] text-blue-600 dark:text-blue-400">
+                    {Math.round(s.job?.progress ?? 0)}%
+                  </span>
+                ) : (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleClose(s.key, false);
+                    }}
+                    aria-label={`关闭 ${s.title}`}
+                    title="关闭"
+                    className="shrink-0 rounded p-0.5 text-slate-400 opacity-0 transition-opacity duration-150 hover:bg-slate-200 hover:text-slate-700 focus:opacity-100 group-hover:opacity-100 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      className="h-3 w-3"
+                      aria-hidden="true"
+                    >
+                      <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {/* + ：回主页新开文献（靠岸学术同款） */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => navigate("/")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                navigate("/");
+              }
+            }}
+            title="新开文献（回主页）"
+            className="mx-1 flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center self-center rounded border border-dashed border-slate-300 text-sm text-slate-400 transition-colors duration-150 hover:border-slate-400 hover:text-slate-600 dark:border-slate-600 dark:text-slate-500 dark:hover:border-slate-500 dark:hover:text-slate-300"
+          >
+            +
+          </div>
+        </div>
+      ) : (
+        <span className="min-w-0 max-w-[45%] truncate px-1 text-xs text-slate-700 dark:text-slate-200" title={pageTitle}>
+          {pageTitle}
+        </span>
+      )}
+
       {/* 拖拽空白区 */}
       <div className="h-full flex-1" data-tauri-drag-region />
       {/* 窗口控制三钮（占满标题栏高度，点击区不触发拖拽） */}

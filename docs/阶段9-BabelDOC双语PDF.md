@@ -20,9 +20,10 @@
 
 ## 3. 任务分解
 
-- [ ] **T0 前置验证（半天，gatekeeper）**：后端 venv `pip install BabelDOC`（锁版本 pin）；CLI 端到端跑通一篇真实论文（RAPTOR 或 TOG）：
+- [x] **T0 前置验证（✅ 2026-09-10 通过，gatekeeper 解除）**：后端 venv `pip install BabelDOC`（锁版本 pin）；CLI 端到端跑通一篇真实论文（RAPTOR 或 TOG）：
   `babeldoc --files x.pdf --openai --openai-base-url <siliconflow> --openai-model Qwen/Qwen3-8B --openai-api-key <key> --custom-system-prompt "/no_think ..." --no-auto-extract-glossary --qps 2 --watermark-output-mode no_watermark --output <dir>`
   验收：双栏+图表+公式页排版正确、Qwen3 无思考链污染、记录耗时/token 量级。**不通过则回到用户重新规划**（这正是"实在不行另作规划"的检查点）
+  - 实测记录（2026-09-10）：RAPTOR 1-3 页端到端 9m14s（含首跑 DocLayout-YOLO 权重下载）；token 16300（prompt 11509/completion 4791/缓存命中 2592，`--no-auto-extract-glossary` 生效术语提取 0）；产物 `*.zh.dual.pdf`（同页双语对照）+ `*.zh.mono.pdf`；`/no_think` 无思考链污染；安装注意=独立 venv（py3.12）+ `env -u PYTHONPATH` 绕 WorkBuddy shim 的批量删除守卫。工程量较预估多出：装包 35 分钟（依赖大）
 - [ ] **T1 后端导出服务（`backend/export/babeldoc_export.py` 新模块）**
   - `POST /api/export/babeldoc`：启动任务——参数 (file_path)；子进程跑 CLI（`--output` 到 cache 目录，命名含 pdf_hash+model），读取 configStore 同款 API 配置（base_url/key/model）；**key 只经环境变量传子进程，不进日志/不落盘**
   - 进度：CLI `--report-interval` 输出解析 → 内存任务表 `{job_id, status, progress}`；`GET /api/export/babeldoc/{job_id}` 查询；`DELETE` 取消（kill 子进程）

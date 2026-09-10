@@ -358,27 +358,61 @@ function MirrorPage({
   const layout = meta?.layout ?? null;
   const rotated = meta?.rotated ?? false;
   const scale = layout?.scale ?? null;
-  const sorted = useMemo(
-    () => [...anchors].sort((a, b) => a.bb[1] - b.bb[1]),
-    [anchors]
-  );
+  // 阅读顺序：双栏页必须「先左栏后右栏」——纯 y 排序会把左右栏段落交错
+  // 串行。判定必须严：只有**窄块明显分居左右两半**才是双栏；单栏页全宽块
+  // 的 x 中点恰在中线附近，若按中点分栏会随机把底部块分进左组导致乱序
+  // （实测 TOG「1 引言」跑到首位的根因）。双栏页内全宽块（标题/摘要）按 y
+  // 作带分隔，带内窄块先左栏后右栏。
+  const ordered = useMemo(() => {
+    const byY = [...anchors].sort((a, b) => a.bb[1] - b.bb[1]);
+    if (byY.length < 4) return byY;
+    const pageWpt = Math.max(...byY.map((a) => a.bb[2]));
+    const mid = pageWpt / 2;
+    const tol = pageWpt * 0.05;
+    const narrow = (a: Anchor) => a.bb[2] - a.bb[0] < pageWpt * 0.6;
+    const inLeft = (a: Anchor) => narrow(a) && a.bb[2] <= mid + tol;
+    const inRight = (a: Anchor) => narrow(a) && a.bb[0] >= mid - tol;
+    const hasLeft = byY.some(inLeft);
+    const hasRight = byY.some(inRight);
+    if (!hasLeft || !hasRight) return byY;
+    const cmp = (p: Anchor, q: Anchor) => p.bb[1] - q.bb[1];
+    const out: Anchor[] = [];
+    let L: Anchor[] = [];
+    let R: Anchor[] = [];
+    const flush = () => {
+      out.push(...L.sort(cmp), ...R.sort(cmp));
+      L = [];
+      R = [];
+    };
+    for (const a of byY) {
+      if (inLeft(a)) L.push(a);
+      else if (inRight(a)) R.push(a);
+      else {
+        flush();
+        out.push(a);
+      }
+    }
+    flush();
+    return out;
+  }, [anchors]);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [heights, setHeights] = useState<number[]>([]);
 
   // 测量各卡实际渲染高度（译文内容/缩放变化后重测）——游标锚定的间距依据
   useLayoutEffect(() => {
-    setHeights(sorted.map((_, i) => itemRefs.current[i]?.offsetHeight ?? 0));
-  }, [sorted, scale, zoom, layout?.h]);
+    setHeights(ordered.map((_, i) => itemRefs.current[i]?.offsetHeight ?? 0));
+  }, [ordered, scale, zoom, layout?.h]);
 
-  // 游标锚定（绝对定位版）：按锚点顺序排布，每卡 top = max(锚点y, 上一卡
-  // 底边+间距)——位置贴原文（用户诉求"原文在哪译文在哪"），前卡超高时后卡
-  // 顺延，零重叠。绝对定位卡互不影响布局，避免 margin 方案把绝对坐标误当
-  // 间距叠加导致卡片越排越远（2026-09-09 实测标题/摘要间 150px+ 假空隙的根因）。
+  // 游标软锚定（绝对定位版）：top = max(锚点y, 上一段底边+间距)。段落起点
+  // 大致对应原文（软约束），前段超高时后段顺延、零重叠；无"卡片框"暴露
+  // 漂移，位置感知主要靠结构镜像（mockup 2026-09-10 用户确认）。
   // 高度首帧未知（0）按纯锚点摆，测完一帧内修正（useLayoutEffect 无闪烁）。
   let cursorY = 0;
-  const placed = sorted.map((a, i) => {
+  const placed = ordered.map((a, i) => {
     const anchorY = scale != null ? a.bb[1] * scale : 0;
-    const top = i > 0 ? Math.max(anchorY, cursorY + 4) : anchorY;
+    // 短块（标题/节标题）前留更大间距，模拟论文的节间节奏
+    const gap = (a.block.original?.trim().length ?? 0) < 50 ? 14 : 6;
+    const top = i > 0 ? Math.max(anchorY, cursorY + gap) : anchorY;
     cursorY = top + (heights[i] ?? 0);
     return { a, top, i };
   });
@@ -402,12 +436,15 @@ function MirrorPage({
             {placed.map(({ a, top, i }) => {
               const key = `${a.block.page}:${a.block.block_id}`;
               // 未翻译的普通块：瘦身占位条（高度≈原块渲染高，clamp 6-16px），
-              // 不级联挤压下方已译卡的位置对应；hover 仍可手动「译」
+              // 不级联挤压下方已译段的位置对应；hover 仍可手动「译」
               const slim = !a.block.translated && !a.block.formula_hint;
               const slimH = Math.max(
                 6,
                 Math.min(16, (a.bb[3] - a.bb[1]) * scale)
               );
+              // 层级启发：原文短块（标题/作者/节标题）居中加重，正文两端对齐
+              const headingish =
+                (a.block.original?.trim().length ?? 0) < 50;
               return slim ? (
                 <div
                   key={key}
@@ -420,7 +457,7 @@ function MirrorPage({
                   title="未翻译——悬停显示「译」按钮，或点击左栏灰块"
                 >
                   <div
-                    className="rounded border border-dashed border-slate-300 dark:border-slate-600"
+                    className="rounded border border-dashed border-slate-200 dark:border-slate-700"
                     style={{ height: slimH }}
                   />
                   <div className="absolute -top-3 right-2 z-10 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
@@ -436,10 +473,8 @@ function MirrorPage({
                 }}
                 onMouseEnter={() => setHoveredId(key)}
                 onMouseLeave={() => setHoveredId(null)}
-                className={`group rounded-lg border border-l-[3px] bg-white shadow-sm transition-colors duration-150 dark:bg-slate-900/95 ${
-                  hoveredId === key
-                    ? "border-blue-400 dark:border-blue-500"
-                    : "border-slate-200 border-l-blue-400/70 dark:border-slate-700 dark:border-l-blue-500/60"
+                className={`group relative rounded-[4px] transition-colors duration-150 ${
+                  hoveredId === key ? "bg-blue-500/10" : ""
                 }`}
                 style={{
                   position: "absolute",
@@ -449,8 +484,7 @@ function MirrorPage({
                   fontSize: `${0.75 * zoom}rem`,
                 }}
               >
-                {/* 操作按钮悬浮显示（hover 才出现），不占卡片高度——
-                    锚定卡片的每一像素都在挤压后续卡片的位置对应精度 */}
+                {/* 操作按钮悬浮显示（hover 才出现），不占版面高度 */}
                 <div className="absolute -top-3 right-2 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
                   {a.block.formula_hint ? (
                     <FormulaButton block={a.block} />
@@ -458,7 +492,13 @@ function MirrorPage({
                     <BlockTranslateButton block={a.block} />
                   )}
                 </div>
-                <div className="px-2.5 py-1 leading-snug text-slate-900 dark:text-slate-100">
+                <div
+                  className={`px-1 py-0.5 text-slate-800 dark:text-slate-200 ${
+                    headingish
+                      ? "text-center font-medium leading-snug"
+                      : "leading-[1.7] [text-align:justify]"
+                  }`}
+                >
                   <MarkdownText text={a.block.translated ?? ""} />
                 </div>
               </div>

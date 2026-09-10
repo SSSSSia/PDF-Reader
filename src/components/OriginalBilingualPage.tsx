@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore, effectiveZoom } from "../stores/uiStore";
 import { useZoomWheel } from "../hooks/useZoomWheel";
@@ -26,9 +26,11 @@ type PageMeta = { layout: PageLayout | null; rotated: boolean };
  * 缩放：外层 wrapper 挂 useZoomWheel（原版组缺省 70%，阶段7-T2 语义），
  * 卡内字号随 zoom 线性缩放保持与版式的视觉比例。
  *
- * 已知限制（v1，验收后按反馈收敛）：①锚定卡 absolute 不撑开占位，译文
- * 显著长于原块时可能与下方卡片局部重叠（段落自上而下的顺序性使概率低）；
- * ②旋转页坐标会错位——锚定卡与左栏 overlay 一致地不渲染，该页译文暂缺。
+ * 已知限制（v1，验收后按反馈收敛）：①译文卡常比原块高（中译文字量+卡内
+ * 边距），严格逐块对应物理上不可行——采用「首卡严格贴锚点 + 后卡顺序级联
+ * （零重叠，间距仅 4px）+ 卡片极限瘦身（无标签行/悬停按钮/紧凑行高）延缓
+ * 漂移」策略，漂移程度取决于译文长度，属信息量差异的固有约束；②旋转页
+ * 坐标会错位——锚定卡与左栏 overlay 一致地不渲染，该页译文暂缺。
  */
 export default function OriginalBilingualPage() {
   const filePath = usePdfStore((s) => s.filePath);
@@ -45,6 +47,8 @@ export default function OriginalBilingualPage() {
   const [leftW, setLeftW] = useState(0);
   // block_id → 右栏译文卡元素（左栏高亮点击定位用）
   const cardRefs = useRef<Map<number, HTMLElement | null>>(new Map());
+  // 双向 hover 联动：悬停右栏卡 ↔ 左栏对应原文块同步加深（位置对应可视化）
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [pageMeta, setPageMeta] = useState<Map<number, PageMeta>>(new Map());
 
   // 左栏宽度跟踪（fit-width 基准；右栏镜像几何同源此值）。
@@ -168,6 +172,8 @@ export default function OriginalBilingualPage() {
                     zoom={zoom}
                     onMeta={onMeta}
                     onJump={focusCard}
+                    hoveredId={hoveredId}
+                    setHoveredId={setHoveredId}
                   />
                 ))}
               </div>
@@ -192,6 +198,8 @@ export default function OriginalBilingualPage() {
                     pageW={pageW}
                     zoom={zoom}
                     cardRefs={cardRefs}
+                    hoveredId={hoveredId}
+                    setHoveredId={setHoveredId}
                   />
                 ))}
                 {unanchored.length > 0 && (
@@ -220,7 +228,7 @@ export default function OriginalBilingualPage() {
   );
 }
 
-/** 左栏单页：懒渲染 canvas + 高亮 overlay（点击 → 右栏定位）+ 布局上报 */
+/** 左栏单页：懒渲染 canvas + 高亮 overlay（点击/悬停 ↔ 右栏联动）+ 布局上报 */
 function SourcePage({
   pdf,
   pageNo,
@@ -229,6 +237,8 @@ function SourcePage({
   zoom,
   onMeta,
   onJump,
+  hoveredId,
+  setHoveredId,
 }: {
   pdf: any;
   pageNo: number;
@@ -237,6 +247,8 @@ function SourcePage({
   zoom: number;
   onMeta: (pageNo: number, meta: PageMeta) => void;
   onJump: (blockId: number) => void;
+  hoveredId: number | null;
+  setHoveredId: (id: number | null) => void;
 }) {
   const { holderRef, canvasRef, layout, rotated } = useLazyPage({
     pdf,
@@ -267,6 +279,7 @@ function SourcePage({
               const bb = a.bb;
               const s = layout.scale;
               const has = !!a.block.translated;
+              const hovered = hoveredId === a.block.block_id;
               return (
                 <div
                   key={`${a.block.block_id}-${i}`}
@@ -276,10 +289,14 @@ function SourcePage({
                   onKeyDown={(e) =>
                     e.key === "Enter" && onJump(a.block.block_id)
                   }
+                  onMouseEnter={() => has && setHoveredId(a.block.block_id)}
+                  onMouseLeave={() => setHoveredId(null)}
                   className={`absolute cursor-pointer rounded-[3px] transition-colors duration-100 ${
-                    has
-                      ? "bg-blue-500/10 hover:bg-blue-500/30"
-                      : "bg-slate-400/5 hover:bg-slate-400/30"
+                    hovered
+                      ? "bg-blue-500/40 ring-1 ring-blue-500"
+                      : has
+                        ? "bg-blue-500/10 hover:bg-blue-500/30"
+                        : "bg-slate-400/5 hover:bg-slate-400/30"
                   }`}
                   style={{
                     left: bb[0] * s,
@@ -307,7 +324,7 @@ function SourcePage({
   );
 }
 
-/** 右栏单页：镜像占位（高度=左栏渲染结果）+ 锚定译文卡 */
+/** 右栏单页：镜像占位（高度=左栏渲染结果）+ 流式锚定译文卡 */
 function MirrorPage({
   pageNo,
   meta,
@@ -315,6 +332,8 @@ function MirrorPage({
   pageW,
   zoom,
   cardRefs,
+  hoveredId,
+  setHoveredId,
 }: {
   pageNo: number;
   meta: PageMeta | null;
@@ -322,6 +341,8 @@ function MirrorPage({
   pageW: number;
   zoom: number;
   cardRefs: { current: Map<number, HTMLElement | null> };
+  hoveredId: number | null;
+  setHoveredId: (id: number | null) => void;
 }) {
   const layout = meta?.layout ?? null;
   const rotated = meta?.rotated ?? false;
@@ -330,40 +351,75 @@ function MirrorPage({
     () => [...anchors].sort((a, b) => a.bb[1] - b.bb[1]),
     [anchors]
   );
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [heights, setHeights] = useState<number[]>([]);
+
+  // 测量各卡实际渲染高度（译文内容/缩放变化后重测）——游标锚定的间距依据
+  useLayoutEffect(() => {
+    setHeights(sorted.map((_, i) => itemRefs.current[i]?.offsetHeight ?? 0));
+  }, [sorted, scale, zoom, layout?.h]);
+
+  // 游标锚定（绝对定位版）：按锚点顺序排布，每卡 top = max(锚点y, 上一卡
+  // 底边+间距)——位置贴原文（用户诉求"原文在哪译文在哪"），前卡超高时后卡
+  // 顺延，零重叠。绝对定位卡互不影响布局，避免 margin 方案把绝对坐标误当
+  // 间距叠加导致卡片越排越远（2026-09-09 实测标题/摘要间 150px+ 假空隙的根因）。
+  // 高度首帧未知（0）按纯锚点摆，测完一帧内修正（useLayoutEffect 无闪烁）。
+  let cursorY = 0;
+  const placed = sorted.map((a, i) => {
+    const anchorY = scale != null ? a.bb[1] * scale : 0;
+    const top = i > 0 ? Math.max(anchorY, cursorY + 4) : anchorY;
+    cursorY = top + (heights[i] ?? 0);
+    return { a, top, i };
+  });
+  // 占位高度：镜像左栏版面，但尾部卡片超出页底时随之撑高（不截断译文）
+  const contentH = layout ? Math.max(layout.h, cursorY) : undefined;
 
   return (
     <div
       className="relative mb-6"
-      style={{ minHeight: layout ? layout.h + 28 : 920 }}
+      style={{ minHeight: contentH ? contentH + 28 : 920 }}
     >
       <div
         className="relative mx-auto"
-        style={{ width: layout ? pageW : undefined, height: layout ? layout.h : undefined }}
+        style={{
+          width: layout ? pageW : undefined,
+          height: contentH,
+        }}
       >
         {!rotated && scale != null && (
-          sorted.map((a) => {
-            const s = scale;
-            return (
+          <div className="absolute inset-x-0 top-0">
+            {placed.map(({ a, top, i }) => (
               <div
                 key={a.block.block_id}
                 ref={(el) => {
+                  itemRefs.current[i] = el;
                   cardRefs.current.set(a.block.block_id, el);
                 }}
-                className="absolute left-0 right-0 rounded-lg border border-slate-200 bg-white/95 shadow-sm dark:border-slate-700 dark:bg-slate-900/95"
-                style={{ top: a.bb[1] * s, fontSize: `${0.875 * zoom}rem` }}
+                onMouseEnter={() => setHoveredId(a.block.block_id)}
+                onMouseLeave={() => setHoveredId(null)}
+                className={`group rounded-lg border border-l-[3px] bg-white shadow-sm transition-colors duration-150 dark:bg-slate-900/95 ${
+                  hoveredId === a.block.block_id
+                    ? "border-blue-400 dark:border-blue-500"
+                    : "border-slate-200 border-l-blue-400/70 dark:border-slate-700 dark:border-l-blue-500/60"
+                }`}
+                style={{
+                  position: "absolute",
+                  top,
+                  left: 0,
+                  right: 0,
+                  fontSize: `${0.875 * zoom}rem`,
+                }}
               >
-                <div className="flex items-center justify-between gap-2 px-2.5 pt-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">
-                    译文
-                  </span>
-                  {/* 公式块只出「式」（识别成功自动重译），其余「译/重译」 */}
+                {/* 操作按钮悬浮显示（hover 才出现），不占卡片高度——
+                    锚定卡片的每一像素都在挤压后续卡片的位置对应精度 */}
+                <div className="absolute -top-3 right-2 z-10 flex items-center gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
                   {a.block.formula_hint ? (
                     <FormulaButton block={a.block} />
                   ) : (
                     <BlockTranslateButton block={a.block} />
                   )}
                 </div>
-                <div className="px-2.5 pb-2 pt-0.5 leading-relaxed text-slate-900 dark:text-slate-100">
+                <div className="px-2.5 py-1.5 leading-snug text-slate-900 dark:text-slate-100">
                   {a.block.translated ? (
                     <MarkdownText text={a.block.translated} />
                   ) : (
@@ -373,8 +429,8 @@ function MirrorPage({
                   )}
                 </div>
               </div>
-            );
-          })
+            ))}
+          </div>
         )}
         {rotated && (
           <div className="absolute left-2 top-2 rounded bg-amber-100 px-2 py-1 text-xs text-amber-800">

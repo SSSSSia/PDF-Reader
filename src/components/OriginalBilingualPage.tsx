@@ -141,11 +141,11 @@ export default function OriginalBilingualPage() {
     <div
       ref={zoomRef}
       className="h-[calc(100vh-170px)]"
-      /* 注入 prose 缩放变量（2026-09-10 用户反馈"译文字体太大"根因）：
-         MarkdownText 的 .prose-zoomable 字号=1rem×var(--reader-zoom,1)，
-         本视图此前未注入恒为 16px，压过卡片继承字号。乘 0.75 瘦身系数
-         使译文正文字号=12px×zoom，与原版 70% 基准的视觉比例匹配 */
-      style={{ "--reader-zoom": 0.75 * zoom } as React.CSSProperties}
+      /* 译文字号与 zoom 解耦（2026-09-10 用户反馈"一放大就看不到一部分"）：
+         zoom 的本意是放大原版 PDF，译文若同步缩放，120% 时达 14.4px 内容
+         暴涨溢出。固定 0.75rem（12px）；连带收益：放大时左页变高而右栏
+         内容不变，级联漂移自然收敛 */
+      style={{ "--reader-zoom": 0.75 } as React.CSSProperties}
     >
       <div className="flex h-full flex-col gap-3 md:flex-row">
         {error && (
@@ -481,7 +481,7 @@ function MirrorPage({
                   top,
                   left: 0,
                   right: 0,
-                  fontSize: `${0.75 * zoom}rem`,
+                  fontSize: "0.75rem",
                 }}
               >
                 {/* 操作按钮悬浮显示（hover 才出现），不占版面高度 */}

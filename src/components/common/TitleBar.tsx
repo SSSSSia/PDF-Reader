@@ -83,10 +83,10 @@ export default function TitleBar() {
       onDoubleClick={() => win?.toggleMaximize()}
       className="flex h-10 shrink-0 select-none items-center gap-1 border-b border-slate-200 bg-slate-50 pl-2.5 dark:border-slate-700 dark:bg-slate-900"
     >
-      {/* logo：点击返回主页（同靠岸学术） */}
+      {/* logo + 应用名：点击返回主页（同靠岸学术） */}
       <Link
         to="/"
-        className="flex shrink-0 items-center gap-1.5 rounded px-1 py-0.5"
+        className="mr-1 flex shrink-0 items-center gap-1.5 rounded px-1 py-0.5"
         title="返回主页"
       >
         <span
@@ -95,11 +95,14 @@ export default function TitleBar() {
         >
           译
         </span>
+        <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+          PDF双语阅读器
+        </span>
       </Link>
 
       {/* 文章多开 tab（会话注册表）：点击切换 / × 关闭；无会话时回退页面标题 */}
       {ordered.length > 0 ? (
-        <div className="flex h-full min-w-0 flex-1 items-stretch overflow-x-auto">
+        <div className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1.5">
           {ordered.map((s) => {
             const active = s.key === sessionKey;
             const running = s.job?.status === "running";
@@ -118,10 +121,10 @@ export default function TitleBar() {
                   }
                 }}
                 title={running ? `翻译中 ${Math.round(s.job?.progress ?? 0)}%` : s.title}
-                className={`group flex max-w-[13rem] shrink-0 cursor-pointer items-center gap-1.5 border-r border-slate-200 px-3 text-xs transition-colors duration-150 dark:border-slate-700 ${
+                className={`group flex h-7 max-w-[13rem] shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors duration-150 ${
                   active
-                    ? "border-t-2 border-t-blue-600 bg-white font-medium text-slate-900 dark:bg-slate-800 dark:text-slate-100"
-                    : "border-t-2 border-t-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-200"
+                    ? "border-slate-200 bg-white font-medium text-slate-900 shadow-sm dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"
+                    : "border-transparent text-slate-500 hover:bg-slate-200/70 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-200"
                 }`}
               >
                 {running && (
@@ -167,22 +170,6 @@ export default function TitleBar() {
               </div>
             );
           })}
-          {/* + ：回主页新开文献（靠岸学术同款） */}
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => navigate("/")}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                navigate("/");
-              }
-            }}
-            title="新开文献（回主页）"
-            className="mx-1 flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center self-center rounded border border-dashed border-slate-300 text-sm text-slate-400 transition-colors duration-150 hover:border-slate-400 hover:text-slate-600 dark:border-slate-600 dark:text-slate-500 dark:hover:border-slate-500 dark:hover:text-slate-300"
-          >
-            +
-          </div>
         </div>
       ) : (
         <span className="min-w-0 max-w-[45%] truncate px-1 text-xs text-slate-700 dark:text-slate-200" title={pageTitle}>

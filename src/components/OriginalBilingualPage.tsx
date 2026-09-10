@@ -134,7 +134,15 @@ export default function OriginalBilingualPage() {
   const columnW = leftW > 0 ? (leftW - 48) * zoom + 32 : undefined;
 
   return (
-    <div ref={zoomRef} className="h-[calc(100vh-170px)]">
+    <div
+      ref={zoomRef}
+      className="h-[calc(100vh-170px)]"
+      /* 注入 prose 缩放变量（2026-09-10 用户反馈"译文字体太大"根因）：
+         MarkdownText 的 .prose-zoomable 字号=1rem×var(--reader-zoom,1)，
+         本视图此前未注入恒为 16px，压过卡片继承字号。乘 0.75 瘦身系数
+         使译文正文字号=12px×zoom，与原版 70% 基准的视觉比例匹配 */
+      style={{ "--reader-zoom": 0.75 * zoom } as React.CSSProperties}
+    >
       <div className="flex h-full flex-col gap-3 md:flex-row">
         {error && (
           <div
@@ -407,7 +415,7 @@ function MirrorPage({
                   top,
                   left: 0,
                   right: 0,
-                  fontSize: `${0.875 * zoom}rem`,
+                  fontSize: `${0.75 * zoom}rem`,
                 }}
               >
                 {/* 操作按钮悬浮显示（hover 才出现），不占卡片高度——
@@ -461,7 +469,7 @@ function TranslateCard({
         cardRefs.current.set(block.block_id, el);
       }}
       className="rounded-lg border border-slate-200 bg-white/95 shadow-sm dark:border-slate-700 dark:bg-slate-900/95"
-      style={{ fontSize: `${0.875 * zoom}rem` }}
+      style={{ fontSize: `${0.75 * zoom}rem` }}
     >
       <div className="flex items-center justify-between gap-2 px-2.5 pt-1.5">
         <span className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-400">

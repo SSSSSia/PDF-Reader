@@ -74,7 +74,7 @@ export default function DualPdfPage() {
             正在生成排版对照
           </p>
           <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
-            BabelDOC 重新解析并翻译整篇（首次较慢，之后同文档秒开）
+            正在重新解析并翻译整篇（首次较慢，之后同文档秒开）
             {stage ? ` · ${stage}` : ""}
           </p>
           <div
@@ -111,7 +111,7 @@ export default function DualPdfPage() {
             排版对照未生成
           </p>
           <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
-            BabelDOC 重新解析并翻译整篇（首次较慢，之后同文档秒开）
+            正在重新解析并翻译整篇（首次较慢，之后同文档秒开）
           </p>
           <button className="btn-primary" onClick={() => void start(filePath)}>
             开始生成

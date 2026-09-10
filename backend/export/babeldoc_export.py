@@ -191,11 +191,18 @@ async def start_export(file_path: str, translate_config: dict, cache_dir: str) -
         "model": model,
         "dual_path": "",
         "mono_path": "",
+        "log_path": os.path.join(out_dir, "worker.log"),
         "created_at": time.time(),
         "finished_at": None,
     }
     _jobs[job_id] = job
 
+    # worker 诊断日志直接落盘（关键：绝不能用 PIPE 且不读——BabelDOC 日志
+    # 写满 64KB 管道缓冲后 worker 会永久阻塞在 stderr 写上，表现为"假死"
+    # 卡在某个百分比。2026-09-10 真实论文 1h 不完成即此根因，实证
+    # cache.v1.db-wal 在 19:41 后停止增长而进程存活）。
+    log_path = os.path.join(out_dir, "worker.log")
+    log_fh = open(log_path, "a", encoding="utf-8")
     cmd = [
         venv_python,
         _worker_path(),
@@ -204,7 +211,7 @@ async def start_export(file_path: str, translate_config: dict, cache_dir: str) -
         "--base-url", api_url,
         "--api-key", api_key,   # 仅进 argv，绝不写日志/任务表
         "--model", model,
-        "--qps", "2",
+        "--qps", "6",           # 429 由 BabelDOC 内部 tenacity 重试兜底（100 次/指数退避）
         "--lang-in", "en",      # 阶段9 范围：英文学术论文 → 中文
         "--lang-out", "zh",
     ]
@@ -212,10 +219,11 @@ async def start_export(file_path: str, translate_config: dict, cache_dir: str) -
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=log_fh,
             cwd=_project_root(),
         )
     except OSError as e:
+        log_fh.close()
         job["status"] = "error"
         job["finished_at"] = time.time()
         job["message"] = f"无法启动 BabelDOC 子进程: {e}"
@@ -223,6 +231,7 @@ async def start_export(file_path: str, translate_config: dict, cache_dir: str) -
         return _public(job)
 
     job["_proc"] = proc
+    job["_log_fh"] = log_fh
     job["status"] = "running"
     logger.info(
         "BabelDOC 导出启动 job_id=%s file=%s model=%s（key 已隐去）",
@@ -235,6 +244,7 @@ async def start_export(file_path: str, translate_config: dict, cache_dir: str) -
 async def _pump(job: dict, proc: subprocess.Popen) -> None:
     """读取 worker stdout 的 JSON 行，更新进度；进程结束后收敛任务状态。"""
     job_id = job["job_id"]
+    last_decile = -1
     try:
         assert proc.stdout is not None
         while True:
@@ -253,6 +263,14 @@ async def _pump(job: dict, proc: subprocess.Popen) -> None:
                 overall = float(event.get("overall") or 0)
                 job["progress"] = max(job.get("progress", 0), min(99.0, overall))
                 job["stage"] = str(event.get("stage") or job.get("stage") or "")
+                # 每 10% 落一行后端日志（长任务可观测性，2026-09-10 用户反馈"1h 没完"排查困难）
+                decile = int(job["progress"] // 10)
+                if decile > last_decile:
+                    last_decile = decile
+                    logger.info(
+                        "BabelDOC 进度 job_id=%s %s%% stage=%s",
+                        job_id, round(job["progress"]), job["stage"],
+                    )
             elif etype == "finish":
                 job["progress"] = 100.0
                 job["stage"] = ""
@@ -275,12 +293,7 @@ async def _pump(job: dict, proc: subprocess.Popen) -> None:
             if code == 0:
                 job["message"] = "子进程结束但未产出结果"
             else:
-                stderr_tail = ""
-                try:
-                    assert proc.stderr is not None
-                    stderr_tail = proc.stderr.read().decode("utf-8", "replace")[-500:]
-                except Exception:  # noqa: BLE001
-                    pass
+                stderr_tail = _read_log_tail(job)
                 job["message"] = f"子进程异常退出（code={code}）{stderr_tail}"
             logger.error("BabelDOC 导出失败 job_id=%s: %s", job_id, job["message"])
     except Exception:  # noqa: BLE001 — 泵任务兜底：任何异常都收敛为 error 而非悬空 running
@@ -289,3 +302,22 @@ async def _pump(job: dict, proc: subprocess.Popen) -> None:
             job["status"] = "error"
             job["message"] = "内部错误（进度读取异常）"
             job["finished_at"] = time.time()
+    finally:
+        fh = job.pop("_log_fh", None)
+        if fh:
+            try:
+                fh.close()
+            except OSError:
+                pass
+
+
+def _read_log_tail(job: dict, limit: int = 400) -> str:
+    """worker.log 末尾片段（诊断用；stderr 已改落盘不再走 PIPE）。"""
+    try:
+        with open(job["log_path"], encoding="utf-8", errors="replace") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - 4000))
+            return f.read()[-limit:].replace("\n", " ")
+    except OSError:
+        return ""

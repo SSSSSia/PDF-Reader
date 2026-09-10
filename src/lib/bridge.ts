@@ -171,6 +171,71 @@ export async function openDoc(docId: string): Promise<OpenDocResult> {
   }) as Promise<OpenDocResult>;
 }
 
+/* ---------------- 阶段9：BabelDOC 双语 PDF 导出 ---------------- */
+
+export interface BabelDocJob {
+  job_id: string;
+  status: "pending" | "running" | "done" | "error" | "cancelled";
+  progress: number;
+  stage: string;
+  message: string;
+  cached: boolean;
+  file_path: string;
+  model: string;
+  dual_path: string;
+  mono_path: string;
+}
+
+/** 启动 BabelDOC 导出：命中缓存瞬时返回 done(cached=true) */
+export async function startBabeldocExport(
+  filePath: string,
+): Promise<BabelDocJob> {
+  return apiFetch(`${API_BASE}/api/export/babeldoc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_path: filePath }),
+  }) as Promise<BabelDocJob>;
+}
+
+/** 查询导出任务进度 */
+export async function getBabeldocStatus(
+  jobId: string,
+): Promise<BabelDocJob | null> {
+  try {
+    return (await apiFetch(
+      `${API_BASE}/api/export/babeldoc/${encodeURIComponent(jobId)}`,
+    )) as BabelDocJob;
+  } catch (e) {
+    // 404（后端重启丢内存任务）归一为 null，其余错误照抛
+    if (String(e).includes("404")) return null;
+    throw e;
+  }
+}
+
+/** 取消导出任务 */
+export async function cancelBabeldoc(jobId: string): Promise<void> {
+  await apiFetch(`${API_BASE}/api/export/babeldoc/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+  });
+}
+
+/**
+ * 用系统默认程序打开本地 PDF。
+ * Tauri 走 plugin-shell open（本地绝对路径）；浏览器经后端原始文件接口。
+ */
+export async function openLocalPdf(filePath: string): Promise<void> {
+  if (isTauri()) {
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(filePath);
+  } else {
+    window.open(
+      `${API_BASE}/api/file/raw?path=${encodeURIComponent(filePath)}`,
+      "_blank",
+      "noopener",
+    );
+  }
+}
+
 /** 启动流水线，返回与 Rust run_pipeline 一致的 JSON 字符串 */
 export async function runPipeline(filePath: string): Promise<string> {
   if (isTauri()) {

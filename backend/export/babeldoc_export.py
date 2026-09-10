@@ -1,0 +1,291 @@
+"""BabelDOC 双语 PDF 导出服务（阶段9-T1）。
+
+职责：
+- POST /api/export/babeldoc          启动导出任务（子进程跑 babeldoc_worker.py）
+- GET  /api/export/babeldoc/{job_id} 查询进度（内存任务表，不落盘）
+- DELETE /api/export/babeldoc/{job_id} 取消（kill 子进程）
+
+设计要点：
+- 隔离：BabelDOC 依赖重（onnx 等），装在项目根 .venv-babeldoc 独立 venv；
+  子进程用该 venv 的 python 跑 worker，与主后端环境完全隔离。
+- 幂等缓存：产物目录 <cache>/babeldoc/<pdf_hash>/<model_slug>/，
+  dual PDF 已存在即视为命中，直接返回 done（复用 T0 产物零成本重开）。
+- 同一 (pdf_hash, model) 已有 running 任务时幂等返回该任务。
+- 安全：api_key 仅经 argv 传给 worker 子进程（BabelDOC 不支持环境变量读取），
+  本模块所有日志/异常/任务表均不含 key。
+- 进度协议：worker stdout 逐行 JSON（见 babeldoc_worker.py 模块注释），
+  主后端只做转发聚合，不解析 BabelDOC 内部结构。
+"""
+
+import asyncio
+import json
+import logging
+import os
+import re
+import subprocess
+import sys
+import time
+import uuid
+
+logger = logging.getLogger("pdf-reader.export")
+
+# 任务在内存中的生命周期 = 后端进程生命周期；重启后 GET 404，前端提示重新导出即可
+# （产物本身落盘缓存，重启后重新"导出"同一 PDF 会瞬时命中缓存返回 done）
+_jobs: dict[str, dict] = {}
+
+_PUMP_TASKS: dict[str, asyncio.Task] = {}
+
+_STATUS = ("pending", "running", "done", "error", "cancelled")
+
+
+def _project_root() -> str:
+    # __file__ = <root>/backend/export/babeldoc_export.py → 上溯三层到项目根
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _venv_python() -> str | None:
+    """BabelDOC 独立 venv 的 python 路径；未安装返回 None。"""
+    if sys.platform == "win32":
+        p = os.path.join(_project_root(), ".venv-babeldoc", "Scripts", "python.exe")
+    else:
+        p = os.path.join(_project_root(), ".venv-babeldoc", "bin", "python")
+    return p if os.path.isfile(p) else None
+
+
+def _worker_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "babeldoc_worker.py")
+
+
+def _model_slug(model: str) -> str:
+    """模型名转安全目录名：Qwen/Qwen3-8B -> Qwen_Qwen3-8B"""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", model) or "default"
+
+
+def _output_dir(cache_dir: str, pdf_hash: str, model: str) -> str:
+    return os.path.join(cache_dir, "babeldoc", pdf_hash, _model_slug(model))
+
+
+def _find_cached_dual(out_dir: str) -> str | None:
+    """命中缓存：目录里已有 *.dual.pdf 即返回（BabelDOC 命名 <stem>.<wm>.<lang>.dual.pdf）。"""
+    if not os.path.isdir(out_dir):
+        return None
+    for name in sorted(os.listdir(out_dir)):
+        if name.endswith(".dual.pdf"):
+            return os.path.join(out_dir, name)
+    return None
+
+
+def _find_cached_mono(out_dir: str) -> str:
+    if not os.path.isdir(out_dir):
+        return ""
+    for name in sorted(os.listdir(out_dir)):
+        if name.endswith(".mono.pdf"):
+            return os.path.join(out_dir, name)
+    return ""
+
+
+def _public(job: dict) -> dict:
+    """对外序列化：剔除内部字段；任何情况下都不携带 api_key。"""
+    return {
+        k: v
+        for k, v in job.items()
+        if not k.startswith("_") and k != "api_key"
+    }
+
+
+def get_status(job_id: str) -> dict | None:
+    job = _jobs.get(job_id)
+    return _public(job) if job else None
+
+
+async def cancel(job_id: str) -> bool:
+    job = _jobs.get(job_id)
+    if not job:
+        return False
+    if job["status"] in ("done", "error", "cancelled"):
+        return True
+    proc: subprocess.Popen | None = job.get("_proc")
+    if proc and proc.poll() is None:
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        except OSError:
+            logger.exception("取消导出任务失败 job_id=%s", job_id)
+    job["status"] = "cancelled"
+    job["finished_at"] = time.time()
+    job["message"] = "已取消"
+    return True
+
+
+async def start_export(file_path: str, translate_config: dict, cache_dir: str) -> dict:
+    """启动（或命中缓存/幂等复用）一个 BabelDOC 导出任务。失败抛 ValueError/FAQ。"""
+    file_path = (file_path or "").strip()
+    if not file_path or not os.path.isfile(file_path):
+        raise ValueError("文件不存在")
+    if not file_path.lower().endswith(".pdf"):
+        raise ValueError("仅支持 PDF 文件")
+
+    api_url = (translate_config.get("api_url") or "").strip().rstrip("/")
+    api_key = (translate_config.get("api_key") or "").strip()
+    model = (translate_config.get("model") or "").strip()
+    if not api_url or not api_key or not model:
+        raise ValueError("API 配置不完整（api_url / api_key / model），请先在设置中完成配置")
+
+    venv_python = _venv_python()
+    if not venv_python:
+        raise ValueError(
+            "BabelDOC 环境未安装（缺少 .venv-babeldoc），请按 docs/阶段9-BabelDOC双语PDF.md 安装"
+        )
+
+    from cache.file_cache import file_hash
+
+    pdf_hash = await asyncio.to_thread(file_hash, file_path)
+    out_dir = _output_dir(cache_dir, pdf_hash, model)
+
+    # 缓存命中：产物已存在，直接返回 done（幂等，零成本）
+    cached_dual = _find_cached_dual(out_dir)
+    if cached_dual:
+        job_id = uuid.uuid4().hex
+        job = {
+            "job_id": job_id,
+            "status": "done",
+            "progress": 100.0,
+            "stage": "",
+            "message": "缓存命中",
+            "cached": True,
+            "file_path": file_path,
+            "pdf_hash": pdf_hash,
+            "model": model,
+            "dual_path": cached_dual,
+            "mono_path": _find_cached_mono(out_dir),
+            "created_at": time.time(),
+            "finished_at": time.time(),
+        }
+        _jobs[job_id] = job
+        logger.info("BabelDOC 缓存命中 file=%s model=%s", os.path.basename(file_path), model)
+        return _public(job)
+
+    # 幂等：同一 (pdf_hash, model) 已有进行中任务则直接复用
+    for job in _jobs.values():
+        if (
+            job["pdf_hash"] == pdf_hash
+            and job["model"] == model
+            and job["status"] in ("pending", "running")
+        ):
+            return _public(job)
+
+    os.makedirs(out_dir, exist_ok=True)
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "status": "pending",
+        "progress": 0.0,
+        "stage": "启动中",
+        "message": "",
+        "cached": False,
+        "file_path": file_path,
+        "pdf_hash": pdf_hash,
+        "model": model,
+        "dual_path": "",
+        "mono_path": "",
+        "created_at": time.time(),
+        "finished_at": None,
+    }
+    _jobs[job_id] = job
+
+    cmd = [
+        venv_python,
+        _worker_path(),
+        "--input", file_path,
+        "--output-dir", out_dir,
+        "--base-url", api_url,
+        "--api-key", api_key,   # 仅进 argv，绝不写日志/任务表
+        "--model", model,
+        "--qps", "2",
+        "--lang-in", "en",      # 阶段9 范围：英文学术论文 → 中文
+        "--lang-out", "zh",
+    ]
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=_project_root(),
+        )
+    except OSError as e:
+        job["status"] = "error"
+        job["finished_at"] = time.time()
+        job["message"] = f"无法启动 BabelDOC 子进程: {e}"
+        logger.exception("BabelDOC 子进程启动失败 job_id=%s", job_id)
+        return _public(job)
+
+    job["_proc"] = proc
+    job["status"] = "running"
+    logger.info(
+        "BabelDOC 导出启动 job_id=%s file=%s model=%s（key 已隐去）",
+        job_id, os.path.basename(file_path), model,
+    )
+    _PUMP_TASKS[job_id] = asyncio.create_task(_pump(job, proc))
+    return _public(job)
+
+
+async def _pump(job: dict, proc: subprocess.Popen) -> None:
+    """读取 worker stdout 的 JSON 行，更新进度；进程结束后收敛任务状态。"""
+    job_id = job["job_id"]
+    try:
+        assert proc.stdout is not None
+        while True:
+            line = await asyncio.to_thread(proc.stdout.readline)
+            if not line:
+                break
+            try:
+                event = json.loads(line.decode("utf-8", "replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            etype = event.get("type")
+            if etype == "ready":
+                job["stage"] = "加载布局模型"
+                job["progress"] = 1.0
+            elif etype == "progress":
+                overall = float(event.get("overall") or 0)
+                job["progress"] = max(job.get("progress", 0), min(99.0, overall))
+                job["stage"] = str(event.get("stage") or job.get("stage") or "")
+            elif etype == "finish":
+                job["progress"] = 100.0
+                job["stage"] = ""
+                job["status"] = "done"
+                job["dual_path"] = str(event.get("dual") or "")
+                job["mono_path"] = str(event.get("mono") or "")
+                job["finished_at"] = time.time()
+                logger.info("BabelDOC 导出完成 job_id=%s dual=%s", job_id, job["dual_path"])
+            elif etype == "error":
+                job["status"] = "error"
+                job["message"] = str(event.get("error") or "未知错误")
+                job["finished_at"] = time.time()
+                logger.error("BabelDOC 导出失败 job_id=%s: %s", job_id, job["message"])
+
+        # stdout 关闭 = 进程即将退出；等退出码收敛最终状态
+        code = await asyncio.to_thread(proc.wait)
+        if job["status"] in ("pending", "running"):
+            job["status"] = "error"
+            job["finished_at"] = time.time()
+            if code == 0:
+                job["message"] = "子进程结束但未产出结果"
+            else:
+                stderr_tail = ""
+                try:
+                    assert proc.stderr is not None
+                    stderr_tail = proc.stderr.read().decode("utf-8", "replace")[-500:]
+                except Exception:  # noqa: BLE001
+                    pass
+                job["message"] = f"子进程异常退出（code={code}）{stderr_tail}"
+            logger.error("BabelDOC 导出失败 job_id=%s: %s", job_id, job["message"])
+    except Exception:  # noqa: BLE001 — 泵任务兜底：任何异常都收敛为 error 而非悬空 running
+        logger.exception("BabelDOC 进度泵异常 job_id=%s", job_id)
+        if job["status"] in ("pending", "running"):
+            job["status"] = "error"
+            job["message"] = "内部错误（进度读取异常）"
+            job["finished_at"] = time.time()

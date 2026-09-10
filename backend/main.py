@@ -479,5 +479,47 @@ async def api_file_raw(path: str):
 async def api_file_exists(path: str):
     return {"exists": os.path.isfile(path)}
 
+
+# ---------------- 阶段9：BabelDOC 双语 PDF 导出 ----------------
+
+@app.post("/api/export/babeldoc")
+async def api_export_babeldoc(payload: dict):
+    """启动 BabelDOC 双语 PDF 导出（阶段9-T1）。
+
+    入参 {file_path}；复用设置里的翻译 API 配置（api_url/key/model）。
+    缓存命中（<cache>/babeldoc/<pdf_hash>/<model>/ 下已有 dual PDF）瞬时返回
+    done+cached=true；同一 (pdf_hash, model) 进行中任务幂等复用。
+    """
+    from export import babeldoc_export
+
+    try:
+        return await babeldoc_export.start_export(
+            str(payload.get("file_path") or ""),
+            settings.translate_config,
+            settings.cache_dir,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/export/babeldoc/{job_id}")
+async def api_export_babeldoc_status(job_id: str):
+    """导出任务进度查询。任务表在内存中，后端重启后未完成任务丢失（产物仍在缓存）。"""
+    from export import babeldoc_export
+
+    job = babeldoc_export.get_status(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return job
+
+
+@app.delete("/api/export/babeldoc/{job_id}")
+async def api_export_babeldoc_cancel(job_id: str):
+    from export import babeldoc_export
+
+    if not await babeldoc_export.cancel(job_id):
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return babeldoc_export.get_status(job_id)
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

@@ -8,6 +8,7 @@ import {
 } from "../stores/uiStore";
 import { usePdfStore } from "../stores/pdfStore";
 import ExportBar from "./ExportBar";
+import BabelDocButton from "./BabelDocButton";
 
 /**
  * 阅读页共享工具栏：「← 文档库」返回 + 文章标题 ｜ 阅读模式切换（分段控件）+ 缩放 + 导出。
@@ -196,6 +197,8 @@ export default function ReaderToolbar() {
             ＋
           </button>
         </div>
+        {/* 阶段9-T2：BabelDOC 整篇双语 PDF 导出（同页并排，系统阅读器打开） */}
+        <BabelDocButton />
         <ExportBar />
       </div>
     </div>

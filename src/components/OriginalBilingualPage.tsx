@@ -409,8 +409,8 @@ function MirrorPage({
   let cursorY = 0;
   const placed = ordered.map((a, i) => {
     const anchorY = scale != null ? a.bb[1] * scale : 0;
-    // 短块（标题/节标题）前留更大间距，模拟论文的节间节奏
-    const gap = (a.block.original?.trim().length ?? 0) < 50 ? 14 : 6;
+    // 短块（标题/节标题）前留稍大间距，模拟论文的节间节奏
+    const gap = (a.block.original?.trim().length ?? 0) < 50 ? 10 : 5;
     const top = i > 0 ? Math.max(anchorY, cursorY + gap) : anchorY;
     cursorY = top + (heights[i] ?? 0);
     return { a, top, i };
@@ -419,12 +419,15 @@ function MirrorPage({
   // lines = len×0.55×fontSize / blockW，块高 = lines×fontSize×1.25，联立得
   // fontSize = √(块高×blockW / (0.55×1.25×len))。锚点坐标已含 zoom 缩放，
   // 字号随 zoom 与原版同步放大（BabelDOC 行为）；公式块走 KaTeX 固定字号。
+  // clamp 收窄到 9-13px（2026-09-10 用户反馈 Scholaread 对照）：18px 上限
+  // 让作者/机构短块过大、版面空旷；13px 上限+9px 下限在 120% 时即 Scholaread
+  // 式满版可读效果，且各段仍保持与原块的视觉大小对应
   const segFont = (a: Anchor) => {
     const h = (a.bb[3] - a.bb[1]) * scale!;
     const w = Math.max(60, (a.bb[2] - a.bb[0]) * scale!);
     const len = Math.max(12, (a.block.original ?? "").trim().length);
     const est = Math.sqrt((h * w) / (0.55 * 1.25 * len));
-    return Math.min(18, Math.max(6.5, est));
+    return Math.min(13, Math.max(9, est));
   };
   // 占位高度：镜像左栏版面，但尾部卡片超出页底时随之撑高（不截断译文）
   const contentH = layout ? Math.max(layout.h, cursorY) : undefined;

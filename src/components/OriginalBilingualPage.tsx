@@ -45,10 +45,14 @@ export default function OriginalBilingualPage() {
   const leftPaneRef = useRef<HTMLDivElement | null>(null);
   const rightPaneRef = useRef<HTMLDivElement | null>(null);
   const [leftW, setLeftW] = useState(0);
-  // block_id → 右栏译文卡元素（左栏高亮点击定位用）
-  const cardRefs = useRef<Map<number, HTMLElement | null>>(new Map());
+  // 复合键 page:block_id —— block_id 是后端每页 enumerate 的页内索引，
+  // 裸用作全局键会跨页碰撞：cardRefs 恒被最后挂载的同号卡覆盖（点击定位
+  // 永远滚到文档尾部）、hover 跨页误高亮（2026-09-10 用户反馈根因）
+  const keyOf = (b: { page: number; block_id: number }) =>
+    `${b.page}:${b.block_id}`;
+  const cardRefs = useRef<Map<string, HTMLElement | null>>(new Map());
   // 双向 hover 联动：悬停右栏卡 ↔ 左栏对应原文块同步加深（位置对应可视化）
-  const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [pageMeta, setPageMeta] = useState<Map<number, PageMeta>>(new Map());
 
   // 左栏宽度跟踪（fit-width 基准；右栏镜像几何同源此值）。
@@ -123,8 +127,8 @@ export default function OriginalBilingualPage() {
   };
 
   // 点击左栏高亮块 → 右栏对应译文卡滚动定位
-  const focusCard = useCallback((blockId: number) => {
-    cardRefs.current.get(blockId)?.scrollIntoView({
+  const focusCard = useCallback((key: string) => {
+    cardRefs.current.get(key)?.scrollIntoView({
       behavior: "smooth",
       block: "center",
     });
@@ -218,7 +222,7 @@ export default function OriginalBilingualPage() {
                     <div className="flex flex-col gap-2">
                       {unanchored.map((b) => (
                         <TranslateCard
-                          key={b.block_id}
+                          key={keyOf(b)}
                           block={b}
                           zoom={zoom}
                           cardRefs={cardRefs}
@@ -254,9 +258,9 @@ function SourcePage({
   wrapW: number;
   zoom: number;
   onMeta: (pageNo: number, meta: PageMeta) => void;
-  onJump: (blockId: number) => void;
-  hoveredId: number | null;
-  setHoveredId: (id: number | null) => void;
+  onJump: (key: string) => void;
+  hoveredId: string | null;
+  setHoveredId: (id: string | null) => void;
 }) {
   const { holderRef, canvasRef, layout, rotated } = useLazyPage({
     pdf,
@@ -287,17 +291,16 @@ function SourcePage({
               const bb = a.bb;
               const s = layout.scale;
               const has = !!a.block.translated;
-              const hovered = hoveredId === a.block.block_id;
+              const key = `${a.block.page}:${a.block.block_id}`;
+              const hovered = hoveredId === key;
               return (
                 <div
                   key={`${a.block.block_id}-${i}`}
                   role="button"
                   tabIndex={0}
-                  onClick={() => onJump(a.block.block_id)}
-                  onKeyDown={(e) =>
-                    e.key === "Enter" && onJump(a.block.block_id)
-                  }
-                  onMouseEnter={() => has && setHoveredId(a.block.block_id)}
+                  onClick={() => onJump(key)}
+                  onKeyDown={(e) => e.key === "Enter" && onJump(key)}
+                  onMouseEnter={() => has && setHoveredId(key)}
                   onMouseLeave={() => setHoveredId(null)}
                   className={`absolute cursor-pointer rounded-[3px] transition-colors duration-100 ${
                     hovered
@@ -348,9 +351,9 @@ function MirrorPage({
   anchors: Anchor[];
   pageW: number;
   zoom: number;
-  cardRefs: { current: Map<number, HTMLElement | null> };
-  hoveredId: number | null;
-  setHoveredId: (id: number | null) => void;
+  cardRefs: { current: Map<string, HTMLElement | null> };
+  hoveredId: string | null;
+  setHoveredId: (id: string | null) => void;
 }) {
   const layout = meta?.layout ?? null;
   const rotated = meta?.rotated ?? false;
@@ -396,17 +399,45 @@ function MirrorPage({
       >
         {!rotated && scale != null && (
           <div className="absolute inset-x-0 top-0">
-            {placed.map(({ a, top, i }) => (
+            {placed.map(({ a, top, i }) => {
+              const key = `${a.block.page}:${a.block.block_id}`;
+              // 未翻译的普通块：瘦身占位条（高度≈原块渲染高，clamp 6-16px），
+              // 不级联挤压下方已译卡的位置对应；hover 仍可手动「译」
+              const slim = !a.block.translated && !a.block.formula_hint;
+              const slimH = Math.max(
+                6,
+                Math.min(16, (a.bb[3] - a.bb[1]) * scale)
+              );
+              return slim ? (
+                <div
+                  key={key}
+                  ref={(el) => {
+                    itemRefs.current[i] = el;
+                    cardRefs.current.set(key, el);
+                  }}
+                  className="group absolute inset-x-0"
+                  style={{ top }}
+                  title="未翻译——悬停显示「译」按钮，或点击左栏灰块"
+                >
+                  <div
+                    className="rounded border border-dashed border-slate-300 dark:border-slate-600"
+                    style={{ height: slimH }}
+                  />
+                  <div className="absolute -top-3 right-2 z-10 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
+                    <BlockTranslateButton block={a.block} />
+                  </div>
+                </div>
+              ) : (
               <div
-                key={a.block.block_id}
+                key={key}
                 ref={(el) => {
                   itemRefs.current[i] = el;
-                  cardRefs.current.set(a.block.block_id, el);
+                  cardRefs.current.set(key, el);
                 }}
-                onMouseEnter={() => setHoveredId(a.block.block_id)}
+                onMouseEnter={() => setHoveredId(key)}
                 onMouseLeave={() => setHoveredId(null)}
                 className={`group rounded-lg border border-l-[3px] bg-white shadow-sm transition-colors duration-150 dark:bg-slate-900/95 ${
-                  hoveredId === a.block.block_id
+                  hoveredId === key
                     ? "border-blue-400 dark:border-blue-500"
                     : "border-slate-200 border-l-blue-400/70 dark:border-slate-700 dark:border-l-blue-500/60"
                 }`}
@@ -427,17 +458,12 @@ function MirrorPage({
                     <BlockTranslateButton block={a.block} />
                   )}
                 </div>
-                <div className="px-2.5 py-1.5 leading-snug text-slate-900 dark:text-slate-100">
-                  {a.block.translated ? (
-                    <MarkdownText text={a.block.translated} />
-                  ) : (
-                    <span className="italic text-slate-400 dark:text-slate-500">
-                      待翻译…
-                    </span>
-                  )}
+                <div className="px-2.5 py-1 leading-snug text-slate-900 dark:text-slate-100">
+                  <MarkdownText text={a.block.translated ?? ""} />
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
         {rotated && (
@@ -461,12 +487,12 @@ function TranslateCard({
 }: {
   block: TextBlock;
   zoom: number;
-  cardRefs: { current: Map<number, HTMLElement | null> };
+  cardRefs: { current: Map<string, HTMLElement | null> };
 }) {
   return (
     <div
       ref={(el) => {
-        cardRefs.current.set(block.block_id, el);
+        cardRefs.current.set(`${block.page}:${block.block_id}`, el);
       }}
       className="rounded-lg border border-slate-200 bg-white/95 shadow-sm dark:border-slate-700 dark:bg-slate-900/95"
       style={{ fontSize: `${0.75 * zoom}rem` }}

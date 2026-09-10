@@ -30,13 +30,14 @@
   - 幂等缓存：产物目录 `<cache>/babeldoc/<pdf_hash>/<model_slug>/`，已有 `*.dual.pdf` 即命中瞬时返回 done(cached=true)；同 (pdf_hash, model) 进行中任务幂等复用
   - **关键坑（实测发现并修复）**：BabelDOC 0.6.4 Python API 下产物落盘后 `finish` 事件可能永不到来（async-for 挂死在 99% Save PDF，CLI 无此问题）——worker 内置**产物看门狗**：`*.dual.pdf` 出现且大小稳定 4s 即判定成功主动收尾，`os._exit` 绕开线程池残留；worker 兜底 try/except 任何异常都转 error 行
   - 实测：tiny PDF 端到端 启动→进度流式→done 100%→产物 1 页同页英中对照（"图神经网络被广泛应用于…"），泵/取消/缓存命中/错误路径全验
-- [x] **T2 前端入口与进度（✅ 2026-09-10 完成：`BabelDocButton.tsx` + `babeldocStore.ts` + bridge.ts 三个导出函数）**
-  - 入口：工具栏 ExportBar 左侧「双语PDF」按钮（重排版/原版组通用，需源文件在位）
-  - 状态存 zustand store（工具栏三形态切换重挂载不丢轮询）：running 显示百分比+阶段（title 提示，再点取消）；done 变「打开双语PDF」（系统默认程序）；error 红色提示（title 携带原因，点按重试）；后端重启丢任务归一为 idle 可重按
-  - 轮询 2s；`vite build` + `tsc --noEmit` 通过
-- [x] **T3 产物管理（✅ 2026-09-10 完成，采纳"直接打开"方案）**
-  - 完成后按钮变「打开双语PDF」：Tauri 走 plugin-shell open（本地路径），浏览器经后端 `/api/file/raw`；产物持久于 `<cache>/babeldoc/`，重开应用不丢，重按瞬时命中缓存
-  - 不注册进文档库：dual PDF 是成品 PDF 而非翻译会话，注册会与 open_cached_doc 的 pdf_hash 缓存语义冲突（立项时"或"字方案二选一）
+- [x] **T2 前端入口与进度（✅ 2026-09-10 完成；同日验收决策重定位，见 T3'）**
+  - 初版：工具栏「双语PDF」独立按钮 + babeldocStore（跨重挂载不丢轮询）+ bridge 三函数
+  - **同日验收用户决策：双语PDF 不是导出附件，应取代「原版PDF·左右对照」阅读模式本身**——独立按钮退役，入口改为模式切换（见 T3'）
+- [x] **T3 产物管理（✅ 初版"直接打开"已被验收决策升级，见 T3'）**
+- [x] **T3' 双语PDF 重定位（2026-09-10 验收决策，commit a900794）：原版PDF·左右对照 = DualPdfPage**
+  - 点击「原版PDF·左右对照」→ 幂等触发导出（缓存命中秒回；否则阅读区内显示进度卡片，可取消）→ 完成后 **pdfjs 应用内渲染** dual PDF（连续滚动 + fit-width×zoom 懒渲染，缺省 70%），不再跳系统阅读器
+  - 阶段7-T4 自绘 overlay 对照（OriginalBilingualPage）退役；「重新翻译」为 BabelDOC 独立管线所致（首跑整篇成本真实存在，同文档此后走 BabelDOC 内部缓存秒开）——已向用户明示
+  - 产物持久 `<cache>/babeldoc/`；不注册文档库（与 open_cached_doc 的 pdf_hash 会话语义冲突）
 - [ ] **T4 失败处理与边界**
   - 首跑布局模型权重下载失败：报错文案引导（含手动下载/离线资产 `--generate-offline-assets` 路径）
   - 免费档限流 429：qps 降级重试（指数退避，最多 3 次）

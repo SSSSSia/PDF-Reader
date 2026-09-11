@@ -55,36 +55,17 @@ export default function InlinePage() {
       <ReaderToolbar />
       <ReaderTabs />
 
-      {/* 翻译进行中：非阻塞进度条（原文已可读，译文逐段流入） */}
-      {isLoading && (
-        <div className="mb-3" role="status" aria-label="翻译进度">
-          <div className="mb-1 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-            <span>正在翻译，已完成的段落实时显示…</span>
-            <span>{Math.round(progress)}%</span>
-          </div>
-          <div
-            className="w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"
-            style={{ height: 4 }}
-          >
-            <div
-              className="h-full rounded-full bg-blue-600 transition-all duration-300"
-              style={{ width: `${Math.max(2, Math.round(progress))}%` }}
-            />
-          </div>
-        </div>
-      )}
-
       {error && (
         <div
           role="alert"
-          className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300"
+          className="mx-4 mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800/60 dark:bg-red-900/20 dark:text-red-300"
         >
           {error}
         </div>
       )}
 
       {/* 原版PDF 组（阶段7-T3 分组）：点击翻译=pdfjs 原样渲染 + 块坐标译文浮层；
-          左右对照=T4 左渲染右译文锚定对照；进度条仍常驻上方 */}
+          左右对照=T4 左渲染右译文锚定对照；翻译进度见底部状态条 */}
       {readerMode === "original_click" ? (
         <OriginalReader />
       ) : readerMode === "original_bilingual" ? (
@@ -93,7 +74,7 @@ export default function InlinePage() {
       /* 整篇连续文档流：所有页的 block 按文档顺序排布 */
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div
-          className="mx-auto max-w-4xl px-2 pb-16"
+          className="mx-auto max-w-4xl px-4 md:px-6 pb-16"
           style={{ "--reader-zoom": zoom } as CSSProperties}
         >
           {blocks.map((b) => (
@@ -133,6 +114,30 @@ export default function InlinePage() {
           ))}
         </div>
       </div>
+      )}
+
+      {/* 翻译进行中：底部状态条（同 BilingualPage，2026-09-11 用户反馈） */}
+      {isLoading && (
+        <div
+          role="status"
+          aria-label="翻译进度"
+          className="flex h-7 shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 dark:border-slate-700 dark:bg-slate-900"
+        >
+          <span className="truncate text-xs text-slate-500 dark:text-slate-400">
+            正在翻译，已完成的段落实时显示…
+          </span>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="h-1 w-28 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
+              <div
+                className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                style={{ width: `${Math.max(2, Math.round(progress))}%` }}
+              />
+            </div>
+            <span className="w-9 text-right text-xs tabular-nums text-slate-500 dark:text-slate-400">
+              {Math.round(progress)}%
+            </span>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -15,8 +15,8 @@
     "api_key": "",
     "api_url": "https://api.siliconflow.cn/v1",
     "model": "deepseek-ai/DeepSeek-V4-Flash",
-    "target_language": "en",
-    "source_language": "zh"
+    "target_language": "zh",
+    "source_language": "en"
   },
   "ui": {
     "default_mode": "bilingual",

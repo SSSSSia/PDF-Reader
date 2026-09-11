@@ -77,13 +77,14 @@ class Settings:
         }
 
     def _default_translate(self) -> dict:
+        # 默认英→中（2026-09-11 用户决策：学术阅读主场景是英文论文译中文）
         return {
             "provider": "siliconflow",
             "api_key": "",
             "api_url": "https://api.siliconflow.cn/v1",
             "model": "Qwen/Qwen3-8B",
-            "target_language": "en",
-            "source_language": "zh",
+            "target_language": "zh",
+            "source_language": "en",
         }
 
     def _load(self):

@@ -19,6 +19,10 @@ import LoadingSpinner from "./common/LoadingSpinner";
  * - 空状态保留整块拖拽上传区；有文献后仍支持整页拖入 PDF；
  * - 翻译进度内联显示，OCR 完成自动进入阅读页；点击卡片缓存秒开。
  */
+// 提取阶段完成阈值：后端 progress 里程碑 8=逐页提取开始、30=提取完成
+// （原文排版完整定型）、100=翻译完成（见 backend/pipeline/processor.py）
+const EXTRACT_DONE = 30;
+
 export default function MainPage() {
   const { folderId } = useParams();
   const { pages, isLoading, error, setError } = usePdfStore();
@@ -42,14 +46,19 @@ export default function MainPage() {
     void fetchAll();
   }, [fetchAll]);
 
-  // pages 首次非空（后端 OCR 完成、progress≈30）即进入阅读页。
-  // 仅在翻译进行中（isLoading）且「本页挂载时 pages 为空 → 变非空」才触发：
-  // 用户在翻译途中主动回到文献库（挂载时 pages 已非空）不会被弹回阅读页
-  // （2026-09-09 用户反馈：翻译途中点文档库会一直跳回翻译页）。
+  // 自动跳转时机（2026-09-11 用户反馈：原「pages 首次非空」跳太早——后端
+  // 逐页提取，多页文档首次 page 就绪仅 progress≈8-10，落进阅读页时原文
+  // 还在一页页长、布局持续跳动）。改为等提取阶段完成（progress≥EXTRACT_DONE，
+  // 原文排版定型）才进入；此后译文仍逐段流入，边译边读不变。
+  // 仅「本页挂载时 pages 为空 → 变就绪」才触发：用户翻译途中主动回到
+  // 文献库（挂载时已就绪）不会被弹回阅读页（2026-09-09 用户反馈）。
   const pagesWereEmptyRef = useRef(pages.length === 0);
+  const extractReady =
+    !!runningJob && (runningJob.job?.progress ?? 0) >= EXTRACT_DONE;
   useEffect(() => {
     if (
       isLoading &&
+      extractReady &&
       pages.length > 0 &&
       pagesWereEmptyRef.current &&
       !navigatedRef.current
@@ -57,7 +66,7 @@ export default function MainPage() {
       navigatedRef.current = true;
       navigate(mode === "inline" ? "/reader/inline" : "/reader/bilingual");
     }
-  }, [isLoading, pages, mode, navigate]);
+  }, [isLoading, extractReady, pages, mode, navigate]);
 
   // Tauri 环境下监听 OS 文件拖拽（整页生效；HTML5 drop 在 Tauri 中会被拦截）
   useEffect(() => {
@@ -140,6 +149,8 @@ export default function MainPage() {
    *  先快照停靠当前会话并换入翻译会话，再导航——不打断正在读的文献。 */
   const handleProgressClick = () => {
     if (!runningJob) return;
+    // 提取未完成（原文未排版定型）时进入只会看到不完整空页，禁止
+    if ((runningJob.job?.progress ?? 0) < EXTRACT_DONE) return;
     if (usePdfStore.getState().sessionKey !== runningJob.key) {
       useSessionsStore.getState().activate(runningJob.key);
     }
@@ -364,7 +375,7 @@ export default function MainPage() {
       )}
 
       {/* 翻译进行中：内联进度卡（阶段8 后台轮询驱动，与活跃阅读会话解耦；
-          点击激活翻译会话再进入阅读页，不会打断当前阅读的那一篇） */}
+          提取完成（progress≥30，原文排版定型）后才可点击进入阅读页） */}
       {runningJob && runningJob.job && (
         <div
           role="button"
@@ -376,18 +387,30 @@ export default function MainPage() {
               handleProgressClick();
             }
           }}
-          title="点击查看翻译实时进度（OCR 完成后可边译边读）"
-          className="card mt-5 cursor-pointer px-4 py-3.5 animate-fade-in transition-colors duration-150 hover:border-blue-400 dark:hover:border-blue-500"
+          title={
+            runningJob.job.progress >= EXTRACT_DONE
+              ? "点击进入阅读页（翻译继续中，可边译边读）"
+              : "正在提取原文排版，完成后自动进入"
+          }
+          className={`card mt-5 px-4 py-3.5 animate-fade-in transition-colors duration-150 ${
+            runningJob.job.progress >= EXTRACT_DONE
+              ? "cursor-pointer hover:border-blue-400 dark:hover:border-blue-500"
+              : "cursor-default"
+          }`}
         >
           <div className="flex items-center justify-between gap-3">
             <p className="min-w-0 truncate text-sm text-slate-700 dark:text-slate-300">
-              正在翻译：
+              {runningJob.job.progress >= EXTRACT_DONE
+                ? "正在翻译："
+                : "提取原文排版："}
               <span className="font-medium text-slate-900 dark:text-slate-100">
                 {runningJob.snapshot.fileName}
               </span>
-              <span className="ml-2 text-xs text-blue-600 dark:text-blue-400">
-                点击进入 →
-              </span>
+              {runningJob.job.progress >= EXTRACT_DONE && (
+                <span className="ml-2 text-xs text-blue-600 dark:text-blue-400">
+                  点击进入 →
+                </span>
+              )}
             </p>
             <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">
               {Math.round(runningJob.job.progress)}%

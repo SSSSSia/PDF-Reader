@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import { useBabelDocStore } from "../stores/babeldocStore";
 import { useUiStore, effectiveZoom } from "../stores/uiStore";
@@ -10,23 +10,26 @@ import { usePdfDocument } from "../hooks/usePdfDocument";
  * 排版对照页（2026-09-10 验收决策：原版PDF·左右对照 = BabelDOC dual PDF）。
  *
  * 取代阶段7-T4 的自绘 overlay 对照（OriginalBilingualPage 退役）——
- * 「排版完全对齐」直接由 BabelDOC 产物保证：进入本模式时幂等触发导出
- * （缓存命中秒回；否则自动开始，阅读区内显示进度），完成后 pdfjs
+ * 「排版完全对齐」直接由 BabelDOC 产物保证：进入本模式**不自动启动**
+ * （2026-09-11 用户反馈+实测：与主翻译并发曾把内存榨尽致 WebView2 崩溃
+ * 重载）——主翻译进行中显示门禁卡（完成后自动放行），空闲时显示确认
+ * 卡，点「开始生成」才触发导出；完成后 pdfjs
  * 应用内连续渲染 dual PDF（同页并排英中对照），不再跳系统阅读器。
  * 注意：BabelDOC 有独立解析/翻译管线，首次生成需整篇翻译（无法复用
  * 现有翻译缓存）；同文档第二次起走 BabelDOC 内部缓存秒开。
  * 缩放沿用原版机制（fit-width × zoom，缺省 70%，Ctrl+滚轮/工具栏通用）。
  */
 export default function DualPdfPage() {
-  const filePath = usePdfStore((s) => s.filePath);
+  const { filePath, isLoading, progress: mainProgress } = usePdfStore();
   const { phase, progress, stage, dualPath, error, jobId, start, clearError } =
     useBabelDocStore();
+  const navigate = useNavigate();
   const zoomRef = useZoomWheel<HTMLDivElement>();
 
-  // 进入模式即幂等启动（同文件进行中/已完成时 start 内部直接复用）
-  useEffect(() => {
-    if (filePath) void start(filePath);
-  }, [filePath, start]);
+  const backToBilingual = () => {
+    useUiStore.getState().setMode("bilingual");
+    navigate("/reader/bilingual");
+  };
 
   if (!filePath) {
     return (
@@ -102,20 +105,61 @@ export default function DualPdfPage() {
     );
   }
 
-  if (!dualPath) {
-    // idle：挂起状态（取消后/后端重启丢任务），提供手动启动入口
+  if (!dualPath && isLoading && phase === "idle") {
+    // 主翻译进行中：门禁——BabelDOC worker 与主翻译并发会内存耗尽
+    // （2026-09-11 实测 RADAR 资源耗尽 + WebView2 崩溃重载）；翻译完成后
+    // 本卡自动变为「开始生成」确认卡
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center">
         <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center dark:border-slate-700 dark:bg-slate-800">
           <p className="mb-1 text-sm font-medium text-slate-900 dark:text-slate-100">
-            排版对照未生成
+            排版对照待主翻译完成后生成
           </p>
-          <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
-            正在重新解析并翻译整篇（首次较慢，之后同文档秒开）
+          <p className="mb-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+            此模式由 BabelDOC 独立管线对整篇 PDF 重新解析并翻译（首跑数分钟、
+            消耗模型额度，同文档之后秒开）。与主翻译同时运行会争抢内存
+            （实测导致应用崩溃重载），主翻译完成后即可开始。
           </p>
-          <button className="btn-primary" onClick={() => void start(filePath)}>
-            开始生成
+          <div
+            className="mb-1 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"
+            style={{ height: 6 }}
+          >
+            <div
+              className="h-full rounded-full bg-blue-600 transition-all duration-300"
+              style={{ width: `${Math.max(2, Math.round(mainProgress))}%` }}
+            />
+          </div>
+          <p className="mb-4 text-xs tabular-nums text-slate-500 dark:text-slate-400">
+            主翻译进度 {Math.round(mainProgress)}%
+          </p>
+          <button className="btn-secondary" onClick={backToBilingual}>
+            返回重排版
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!dualPath) {
+    // idle：显式确认后才启动（2026-09-11 用户反馈：不要一点模式就自动跑 BabelDOC）
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center dark:border-slate-700 dark:bg-slate-800">
+          <p className="mb-1 text-sm font-medium text-slate-900 dark:text-slate-100">
+            生成排版对照？
+          </p>
+          <p className="mb-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
+            将启动 BabelDOC 独立管线，对整篇 PDF 重新解析并翻译：首跑约数分钟、
+            消耗模型额度（无法复用现有翻译缓存）；同文档生成过一次后秒开。
+          </p>
+          <div className="flex justify-center gap-2">
+            <button className="btn-secondary" onClick={backToBilingual}>
+              暂不
+            </button>
+            <button className="btn-primary" onClick={() => void start(filePath)}>
+              开始生成
+            </button>
+          </div>
         </div>
       </div>
     );

@@ -23,7 +23,7 @@ export default function ExportBar() {
   };
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
       <select
         value={format}
         onChange={(e) => setFormat(e.target.value as ExportFormat)}

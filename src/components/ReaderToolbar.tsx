@@ -62,7 +62,7 @@ export default function ReaderToolbar() {
     }`;
 
   return (
-    <div className="flex h-12 shrink-0 items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 dark:border-slate-700 dark:bg-slate-900">
+    <div className="flex min-h-12 shrink-0 flex-wrap content-center items-center gap-x-3 gap-y-1 border-b border-slate-200 bg-slate-50 px-4 py-1 dark:border-slate-700 dark:bg-slate-900">
       {/* 左：返回文档库（Tauri 下标题栏 logo 承担返回，此处仅浏览器 dev 显示） */}
       <div className="flex min-w-0 flex-1 items-center">
         {"__TAURI_INTERNALS__" in window ? null : (
@@ -161,7 +161,7 @@ export default function ReaderToolbar() {
       {/* 右：缩放 / 主题 / 导出 */}
       <div className="flex flex-1 shrink-0 items-center justify-end gap-2">
         <div
-          className="inline-flex items-center rounded-lg border border-slate-200 bg-white px-1 py-0.5 dark:border-slate-700 dark:bg-slate-800"
+          className="inline-flex shrink-0 items-center rounded-lg border border-slate-200 bg-white px-1 py-0.5 dark:border-slate-700 dark:bg-slate-800"
           role="group"
           aria-label="缩放"
         >

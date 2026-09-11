@@ -27,7 +27,10 @@ export default function DualPdfPage() {
   const zoomRef = useZoomWheel<HTMLDivElement>();
 
   const backToBilingual = () => {
-    useUiStore.getState().setMode("bilingual");
+    // 必须同步复位 readerMode，否则仍停留在原版形态（"暂不"点击无反应根因）
+    const ui = useUiStore.getState();
+    ui.setReaderMode("parallel");
+    ui.setMode("bilingual");
     navigate("/reader/bilingual");
   };
 
@@ -152,10 +155,7 @@ export default function DualPdfPage() {
             将启动 BabelDOC 独立管线，对整篇 PDF 重新解析并翻译：首跑约数分钟、
             消耗模型额度（无法复用现有翻译缓存）；同文档生成过一次后秒开。
           </p>
-          <div className="flex justify-center gap-2">
-            <button className="btn-secondary" onClick={backToBilingual}>
-              暂不
-            </button>
+          <div className="flex justify-center">
             <button className="btn-primary" onClick={() => void start(filePath)}>
               开始生成
             </button>

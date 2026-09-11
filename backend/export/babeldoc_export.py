@@ -211,7 +211,8 @@ async def start_export(file_path: str, translate_config: dict, cache_dir: str) -
         "--base-url", api_url,
         "--api-key", api_key,   # 仅进 argv，绝不写日志/任务表
         "--model", model,
-        "--qps", "6",           # 429 由 BabelDOC 内部 tenacity 重试兜底（100 次/指数退避）
+        "--qps", "6",           # 429：BabelDOC 内部 tenacity 重试兜底 + worker 应用层 qps 减半重跑（T4②）
+        "--max-pages-per-part", "200",  # T4③：大文档分批（未超页数不分批），进度/产物自动聚合合并
         "--lang-in", "en",      # 阶段9 范围：英文学术论文 → 中文
         "--lang-out", "zh",
     ]

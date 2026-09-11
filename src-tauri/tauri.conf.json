@@ -37,10 +37,15 @@
       "sidecar/pdf-backend"
     ],
     "icon": [
-      "icons/32.png",
-      "icons/128.png",
-      "icons/256.png",
-      "icons/512.png"
-    ]
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": "zh-CN"
+      }
+    }
   }
 }

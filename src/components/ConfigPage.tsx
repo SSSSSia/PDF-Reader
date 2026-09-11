@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { useConfigStore } from "../stores/configStore";
+import { useConfigStore, SectionTest } from "../stores/configStore";
 import { AppConfig } from "../types";
 import { testApiConnection } from "../lib/bridge";
 import LoadingSpinner from "./common/LoadingSpinner";
@@ -73,14 +73,6 @@ function PasswordField({
       </button>
     </div>
   );
-}
-
-/** 测试状态（提升到 ConfigPage 持有，保存时自动补测需读取/回显）。
- *  spec 记录测试时的表单值：用户测完又改动地址/Key/模型则视为未测试。 */
-interface SectionTest {
-  state: "idle" | "testing" | "ok" | "fail";
-  msg: string;
-  spec?: { api_url: string; api_key: string; model: string; mode: "ocr" | "text" };
 }
 
 const sameSpec = (
@@ -214,11 +206,10 @@ export default function ConfigPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // 两个区块的测试状态（提升到页面级：保存时自动补测并内联回显）
-  const [tests, setTests] = useState<{ ocr: SectionTest; text: SectionTest }>({
-    ocr: { state: "idle", msg: "" },
-    text: { state: "idle", msg: "" },
-  });
+  // 两个区块的测试状态（全局 store 持有：保存触发的自动补测若被切页打断，
+  // ✓/✗ 结果不随组件卸载丢失，返回设置页仍可见）
+  const tests = useConfigStore((s) => s.apiTests);
+  const setApiTest = useConfigStore((s) => s.setApiTest);
 
   /** 返回目标：固定回主页（文献库）。
    *  2026-09-09 页面逻辑重规划：导航层级为 文献库 ← 阅读页/设置页，
@@ -250,26 +241,20 @@ export default function ConfigPage() {
       model: cfg.model,
       mode: m,
     };
-    setTests((prev) => ({ ...prev, [m]: { state: "testing", msg: "" } }));
+    setApiTest(m, { state: "testing", msg: "" });
     try {
       const r = await testApiConnection(spec);
-      setTests((prev) => ({
-        ...prev,
-        [m]: {
-          state: "ok",
-          msg: `连接成功（${r.model || cfg.model || "未知模型"}）`,
-          spec,
-        },
-      }));
+      setApiTest(m, {
+        state: "ok",
+        msg: `连接成功（${r.model || cfg.model || "未知模型"}）`,
+        spec,
+      });
     } catch (e) {
-      setTests((prev) => ({
-        ...prev,
-        [m]: {
-          state: "fail",
-          msg: e instanceof Error ? e.message : String(e),
-          spec,
-        },
-      }));
+      setApiTest(m, {
+        state: "fail",
+        msg: e instanceof Error ? e.message : String(e),
+        spec,
+      });
     }
   };
 
@@ -403,6 +388,7 @@ export default function ConfigPage() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => navigate(backTarget)}
+            disabled={saving}
             className="btn-secondary"
             title="返回文献库"
           >

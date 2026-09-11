@@ -19,7 +19,12 @@ import httpx
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from pipeline.processor import run_pipeline, get_pipeline_status
+from pipeline.processor import (
+    run_pipeline,
+    get_pipeline_status,
+    running_job_count,
+    MAX_RUNNING_JOBS,
+)
 from config import settings
 
 # uvicorn 的默认 logger 不覆盖端点内 except 的异常细节；
@@ -270,9 +275,17 @@ async def api_test_config(spec: dict):
 
 @app.post("/api/pipeline/run")
 async def api_run_pipeline(file_path: dict):
+    # 阶段11-T2 子集：全局翻译并发上限（前端本就收口 1，此守卫防绕过/多客户端）
+    if running_job_count() >= MAX_RUNNING_JOBS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"已有 {MAX_RUNNING_JOBS} 个翻译任务进行中，请等待完成后再试",
+        )
     try:
         result = await run_pipeline(file_path["file_path"])
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

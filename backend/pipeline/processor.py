@@ -75,6 +75,14 @@ _jobs: dict[str, dict] = {}
 MAX_JOBS = 50
 JOB_TTL_SECONDS = 2 * 60 * 60  # 完成后保留 2 小时，供前端/调试复查
 
+# 阶段11-T2 子集：全局翻译任务并发上限（前端 translationManager 本就收口
+# 为 1，此守卫防多客户端/绕过前端场景叠加；超出后端直接拒绝并提示）
+MAX_RUNNING_JOBS = 2
+
+
+def running_job_count() -> int:
+    return sum(1 for j in _jobs.values() if j.get("status") == "running")
+
 
 def _evict_jobs() -> None:
     now = time.time()

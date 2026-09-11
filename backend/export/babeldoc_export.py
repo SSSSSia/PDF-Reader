@@ -36,6 +36,8 @@ _jobs: dict[str, dict] = {}
 _PUMP_TASKS: dict[str, asyncio.Task] = {}
 
 _STATUS = ("pending", "running", "done", "error", "cancelled")
+# 阶段11-T2 子集：全局 worker 并发上限（T0 实测单 worker RSS 峰值 ~1.5GB）
+_MAX_WORKERS = 2
 
 
 def _project_root() -> str:
@@ -177,6 +179,16 @@ async def start_export(file_path: str, translate_config: dict, cache_dir: str) -
         ):
             return _public(job)
 
+    # 阶段11-T2 子集（T0 裁剪后保留）：全局 worker 并发上限。T0 实测单 worker
+    # RSS 峰值 ~1.5GB，并发叠加是 2026-09-11 内存耗尽崩溃的同源风险；
+    # 超限直接拒绝（前端错误卡提示可读），不做复杂排队
+    running = sum(1 for j in _jobs.values() if j["status"] in ("pending", "running"))
+    if running >= _MAX_WORKERS:
+        raise ValueError(
+            f"已有 {running} 个排版对照任务进行中（上限 {_MAX_WORKERS}），"
+            "请等待完成或取消后再试"
+        )
+
     os.makedirs(out_dir, exist_ok=True)
     job_id = uuid.uuid4().hex
     job = {
@@ -264,6 +276,15 @@ async def _pump(job: dict, proc: subprocess.Popen) -> None:
                 overall = float(event.get("overall") or 0)
                 job["progress"] = max(job.get("progress", 0), min(99.0, overall))
                 job["stage"] = str(event.get("stage") or job.get("stage") or "")
+                # 阶段11-T3 子集：worker RSS 阈值告警（每 job 一次）。2026-09-11
+                # 崩溃实证单 worker 峰值 ~1.5GB，超 2GB 即向崩溃工况演进
+                rss_mb = float(event.get("rss_mb") or 0)
+                if rss_mb >= 2048 and not job.get("_rss_warned"):
+                    job["_rss_warned"] = True
+                    logger.warning(
+                        "BabelDOC worker RSS 告警 job_id=%s %.0fMB（阈值 2048MB）",
+                        job_id, rss_mb,
+                    )
                 # 每 10% 落一行后端日志（长任务可观测性，2026-09-10 用户反馈"1h 没完"排查困难）
                 decile = int(job["progress"] // 10)
                 if decile > last_decile:

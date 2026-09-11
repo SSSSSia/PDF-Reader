@@ -53,6 +53,37 @@ def _is_rate_limit_error(msg: str) -> bool:
     return "429" in low or "ratelimit" in low or "rate limit" in low
 
 
+def _rss_mb() -> float:
+    """当前进程 WorkingSet（MB）。仅 Windows（psapi）；失败/非 Windows 返回 0
+    （主后端据此跳过告警）。阶段11-T3 子集：RSS 阈值告警的数据来源。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        pmc = _PMC()
+        pmc.cb = ctypes.sizeof(_PMC)
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(pmc), pmc.cb):
+            return pmc.WorkingSetSize / 1_048_576
+    except Exception:
+        pass
+    return 0.0
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, help="源 PDF 绝对路径")
@@ -162,6 +193,8 @@ async def main() -> None:
                         "type": "progress",
                         "stage": str(event.get("stage", "")),
                         "overall": float(event.get("overall_progress", 0) or 0),
+                        # 阶段11-T3 子集：RSS 随进度上报，主后端超阈值告警
+                        "rss_mb": round(_rss_mb(), 1),
                     })
                 elif etype == "finish":
                     tr = event.get("translate_result")

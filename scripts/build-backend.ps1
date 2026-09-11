@@ -37,9 +37,15 @@ Write-Host "[1/5] Python: $Python"
 if ($LASTEXITCODE -ne 0) { throw "找不到可用的 Python 解释器，请用 -Python 指定。" }
 
 # 2) 确保 PyInstaller 可用
+# 注意：管理员终端下 PyInstaller 6 会向 stderr 打 DEPRECATION 警告，而
+# PS5.1 的 EAP=Stop 会把「带重定向的 native stderr」误判为致命错误——
+# native 调用期间临时降级 EAP，仅用退出码判断成败（2026-09-11 新机实测）
 Write-Host "[2/5] 检查 PyInstaller ..."
+$ErrorActionPreference = "Continue"
 & $Python -m PyInstaller --version 2>$null
-if ($LASTEXITCODE -ne 0) {
+$pyiOk = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = "Stop"
+if (-not $pyiOk) {
     Write-Host "      未检测到，正在安装 PyInstaller ..."
     & $Python -m pip install pyinstaller
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller 安装失败，请手动安装后重试。" }
@@ -64,8 +70,9 @@ if (Test-Path $outExe) {
     Remove-Item $outExe -Force
 }
 
-# 5) 打包（uvicorn 需显式收集，否则运行期会缺模块）
+# 5) 打包（uvicorn 需显式收集，否则运行期会缺模块；stderr 噪声处理同步骤 2）
 Write-Host "[4/5] 正在打包后端，请稍候（约 1-3 分钟）..."
+$ErrorActionPreference = "Continue"
 & $Python -m PyInstaller `
     --noconfirm --clean --onefile `
     --name $outName `
@@ -80,7 +87,9 @@ Write-Host "[4/5] 正在打包后端，请稍候（约 1-3 分钟）..."
     --collect-all uvicorn `
     --collect-all PyMuPDF `
     $backendEntry
-if ($LASTEXITCODE -ne 0) { throw "后端打包失败，请检查上方 PyInstaller 输出。" }
+$pyiExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($pyiExit -ne 0) { throw "后端打包失败，请检查上方 PyInstaller 输出。" }
 
 # 6) 校验产物
 Write-Host "[5/5] 校验产物 ..."

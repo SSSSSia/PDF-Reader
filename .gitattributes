@@ -1,0 +1,2 @@
+src-tauri/gen/** -text
+src-tauri/Cargo.toml -text

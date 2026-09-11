@@ -1,6 +1,16 @@
 import { create } from "zustand";
 import { PageResult, PipelineResult } from "../types";
 
+/** 单块内容补丁（阶段11-T1）：流式轮询 diff 产物，按 page+block_id 定位。
+ *  字段缺省 = 该字段不变。 */
+export interface BlockPatch {
+  page: number;
+  blockId: number;
+  translated?: string;
+  original?: string;
+  formulaHint?: boolean;
+}
+
 interface PdfState {
   file: File | null;
   filePath: string | null;
@@ -28,6 +38,10 @@ interface PdfState {
    * （英文正文+$..$ 公式）替换拍平原稿，原文栏同步变干净
    */
   updateBlockOriginal: (page: number, blockId: number, original: string) => void;
+  /** 流式批量补丁（阶段11-T1）：单次 set 应用多块变更，替代整表 setPages——
+   *  未触及 page/block 引用保持不变，React.memo 行组件据此跳过重渲染；
+   *  不可变语义与阶段8 快照 captureActive/activate 完全兼容 */
+  applyBlockPatches: (patches: BlockPatch[]) => void;
   setCurrentPage: (page: number) => void;
   setLoading: (loading: boolean) => void;
   setProgress: (progress: number) => void;
@@ -77,6 +91,30 @@ export const usePdfStore = create<PdfState>((set) => ({
             },
       ),
     })),
+  applyBlockPatches: (patches) =>
+    set((state) => {
+      if (patches.length === 0) return state;
+      const byKey = new Map(
+        patches.map((p) => [`${p.page}-${p.blockId}`, p] as const),
+      );
+      const pages = state.pages.map((p) => {
+        let pageTouched = false;
+        const blocks = p.blocks.map((b) => {
+          const patch = byKey.get(`${b.page}-${b.block_id}`);
+          if (!patch) return b;
+          const next = { ...b };
+          if (patch.translated !== undefined) next.translated = patch.translated;
+          if (patch.original !== undefined) next.original = patch.original;
+          if (patch.formulaHint !== undefined)
+            next.formula_hint = patch.formulaHint;
+          pageTouched = true;
+          return next;
+        });
+        // 未触及的页整对象原样返回 → memo 行组件的 block 引用保持稳定
+        return pageTouched ? { ...p, blocks } : p;
+      });
+      return { pages };
+    }),
   setCurrentPage: (page) => set({ currentPage: page }),
   setLoading: (isLoading) => set({ isLoading }),
   setProgress: (progress) => set({ progress }),

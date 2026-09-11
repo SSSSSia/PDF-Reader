@@ -1,8 +1,9 @@
-import type { CSSProperties } from "react";
+import { memo, useMemo, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { usePdfStore } from "../stores/pdfStore";
 import { useUiStore } from "../stores/uiStore";
 import { useZoomWheel } from "../hooks/useZoomWheel";
+import type { TextBlock } from "../types";
 import MarkdownText from "./common/MarkdownText";
 import TranslatableImage from "./common/TranslatableImage";
 import BlockTranslateButton from "./common/BlockTranslateButton";
@@ -11,6 +12,72 @@ import ReaderToolbar from "./ReaderToolbar";
 import ReaderTabs from "./ReaderTabs";
 import OriginalReader from "./OriginalReader";
 import DualPdfPage from "./DualPdfPage";
+
+// 纯图片块（图表快照）：后端已令译文=原文，前端整行居中渲染一次
+const isPureImage = (t: string) => /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(t);
+
+/** 单块行卡片（阶段11-T1）：memo 化——applyBlockPatches 批量补丁下未触及
+ *  块的对象引用保持稳定，浅比较直接跳过重渲染；这是流式翻译不再整列表
+ *  重渲的关键。content-visibility:auto 让视口外内容不参与渲染。 */
+const BilingualBlockRow = memo(function BilingualBlockRow({
+  block,
+}: {
+  block: TextBlock;
+}) {
+  if (isPureImage(block.original)) {
+    return (
+      <div
+        className="grid grid-cols-1 gap-y-2 border-b border-dashed border-slate-200 dark:border-slate-700 md:grid-cols-2 md:gap-x-8"
+        style={{ contentVisibility: "auto", containIntrinsicSize: "auto 260px" }}
+      >
+        <div className="py-3 pr-2">
+          {/* 原文栏不显示「译」按钮：只有译文栏可生成译制图（用户反馈 2026-09-08） */}
+          <TranslatableImage md={block.original} interactive={false} />
+        </div>
+        <div className="py-3 md:border-l md:border-slate-200 md:pl-2 dark:md:border-slate-700">
+          {/* 图表默认右栏也显示原图；表格可点按生成译制图 */}
+          <TranslatableImage md={block.translated || block.original} />
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="grid grid-cols-1 border-b border-dashed border-slate-200 dark:border-slate-700 md:grid-cols-2 md:gap-x-8"
+      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" }}
+    >
+      <div className="paper-font group relative py-3 pr-2 text-justify text-slate-900 dark:text-slate-100">
+        {/* 悬停浮现的单块翻译/重翻按钮（2026-09-07 用户需求）；
+            公式块（含纯公式/混合）只出「式」——识别成功后纯公式
+            直出 LaTeX，混合块替换原文并自动重译（管线翻译完成后
+            也会自动跑一遍，按钮作手动重试入口，2026-09-08） */}
+        <span className="absolute right-1 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          {block.formula_hint ? (
+            <FormulaButton block={block} />
+          ) : (
+            <BlockTranslateButton block={block} />
+          )}
+        </span>
+        <MarkdownText text={block.original} />
+      </div>
+      <div className="paper-font py-3 text-justify text-blue-900 dark:text-blue-100 md:border-l md:border-slate-200 md:pl-2 dark:md:border-slate-700">
+        {block.translated ? (
+          <>
+            {/* 单列模式下给译文加个小标签，区分原文 */}
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-blue-500 md:hidden dark:text-blue-400">
+              译文
+            </span>
+            <MarkdownText text={block.translated} />
+          </>
+        ) : (
+          <span className="italic text-slate-400 dark:text-slate-500">
+            待翻译…
+          </span>
+        )}
+      </div>
+    </div>
+  );
+});
 
 /**
  * 左右对照模式：整篇连续滚动（无分页，对标 Scholaread，用户决策 2026-09-06）。
@@ -27,10 +94,7 @@ export default function BilingualPage() {
   // 阶段7-T2：用户未手动设置过缩放（null）时，重排版缺省 100%（排版基准）
   const zoom = useUiStore((s) => s.zoom) ?? 1;
   const zoomRef = useZoomWheel<HTMLDivElement>();
-  const blocks = pages.flatMap((p) => p.blocks);
-
-  // 纯图片块（图表快照）：后端已令译文=原文，前端整行居中渲染一次
-  const isPureImage = (t: string) => /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(t);
+  const blocks = useMemo(() => pages.flatMap((p) => p.blocks), [pages]);
 
   if (blocks.length === 0) {
     return (
@@ -89,60 +153,9 @@ export default function BilingualPage() {
             </div>
           </div>
 
-          {blocks.map((b) =>
-            isPureImage(b.original) ? (
-              <div
-                key={`${b.page}-${b.block_id}`}
-                className="grid grid-cols-1 gap-y-2 border-b border-dashed border-slate-200 dark:border-slate-700 md:grid-cols-2 md:gap-x-8"
-                style={{ contentVisibility: "auto", containIntrinsicSize: "auto 260px" }}
-              >
-                <div className="py-3 pr-2">
-                  {/* 原文栏不显示「译」按钮：只有译文栏可生成译制图（用户反馈 2026-09-08） */}
-                  <TranslatableImage md={b.original} interactive={false} />
-                </div>
-                <div className="py-3 md:border-l md:border-slate-200 md:pl-2 dark:md:border-slate-700">
-                  {/* 图表默认右栏也显示原图；表格可点按生成译制图 */}
-                  <TranslatableImage md={b.translated || b.original} />
-                </div>
-              </div>
-            ) : (
-              <div
-                key={`${b.page}-${b.block_id}`}
-                className="grid grid-cols-1 border-b border-dashed border-slate-200 dark:border-slate-700 md:grid-cols-2 md:gap-x-8"
-                style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" }}
-              >
-                <div className="paper-font group relative py-3 pr-2 text-justify text-slate-900 dark:text-slate-100">
-                  {/* 悬停浮现的单块翻译/重翻按钮（2026-09-07 用户需求）；
-                      公式块（含纯公式/混合）只出「式」——识别成功后纯公式
-                      直出 LaTeX，混合块替换原文并自动重译（管线翻译完成后
-                      也会自动跑一遍，按钮作手动重试入口，2026-09-08） */}
-                  <span className="absolute right-1 top-2 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                    {b.formula_hint ? (
-                      <FormulaButton block={b} />
-                    ) : (
-                      <BlockTranslateButton block={b} />
-                    )}
-                  </span>
-                  <MarkdownText text={b.original} />
-                </div>
-                <div className="paper-font py-3 text-justify text-blue-900 dark:text-blue-100 md:border-l md:border-slate-200 md:pl-2 dark:md:border-slate-700">
-                  {b.translated ? (
-                    <>
-                      {/* 单列模式下给译文加个小标签，区分原文 */}
-                      <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-blue-500 md:hidden dark:text-blue-400">
-                        译文
-                      </span>
-                      <MarkdownText text={b.translated} />
-                    </>
-                  ) : (
-                    <span className="italic text-slate-400 dark:text-slate-500">
-                      待翻译…
-                    </span>
-                  )}
-                </div>
-              </div>
-            ),
-          )}
+          {blocks.map((b) => (
+            <BilingualBlockRow key={`${b.page}-${b.block_id}`} block={b} />
+          ))}
 
           <div className="h-16" aria-hidden="true" />
         </div>

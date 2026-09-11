@@ -1,5 +1,5 @@
 import { runPipeline, getPipelineStatus } from "./bridge";
-import { usePdfStore } from "../stores/pdfStore";
+import { usePdfStore, type BlockPatch } from "../stores/pdfStore";
 import { useSessionsStore } from "../stores/sessionsStore";
 import { useLibraryStore } from "../stores/libraryStore";
 import type { PipelineResult, PageResult } from "../types";
@@ -36,6 +36,58 @@ function progressiveSignature(pages: PageResult[]): number {
     }
   }
   return pages.length * 1_000_000 + total * 1_000 + translated;
+}
+
+/**
+ * 轮询结果写入活跃 pdfStore（阶段11-T1 局部更新）。
+ * 后端每次返回全量 pages，若整表 setPages 会让数百个块卡片全量重渲染
+ * （阶段11 P1 卡顿根因）。改为与 store 现有 pages 按 (page, block_id) diff：
+ * - 结构变化（提取阶段新页/新块渐进到达）：兜底整表 setPages；
+ * - 仅内容变化（译文流入/原文替换/公式标记）：applyBlockPatches 单次批量补丁，
+ *   未触及块引用不变 → React.memo 行组件跳过重渲染。
+ * 会话快照 updateSnapshot 仍存轮询全量 pages，captureActive/activate 语义不变。
+ */
+function applyPagesToStore(pages: PageResult[]): void {
+  const pdf = usePdfStore.getState();
+  const prev = new Map<string, PageResult["blocks"][number]>();
+  for (const p of pdf.pages) {
+    for (const b of p.blocks) prev.set(`${b.page}-${b.block_id}`, b);
+  }
+
+  let structureChanged = false;
+  const patches: BlockPatch[] = [];
+  for (const p of pages) {
+    for (const b of p.blocks) {
+      const old = prev.get(`${b.page}-${b.block_id}`);
+      if (!old) {
+        // store 里没有的块 = 提取阶段新到达，走整表兜底
+        structureChanged = true;
+        continue;
+      }
+      const patch: BlockPatch = { page: b.page, blockId: b.block_id };
+      let changed = false;
+      if ((b.translated ?? "") !== (old.translated ?? "")) {
+        patch.translated = b.translated ?? "";
+        changed = true;
+      }
+      if ((b.original ?? "") !== (old.original ?? "")) {
+        patch.original = b.original ?? "";
+        changed = true;
+      }
+      if ((b.formula_hint ?? false) !== (old.formula_hint ?? false)) {
+        patch.formulaHint = b.formula_hint;
+        changed = true;
+      }
+      if (changed) patches.push(patch);
+    }
+  }
+
+  if (structureChanged) {
+    pdf.setPages(pages);
+  } else if (patches.length > 0) {
+    pdf.applyBlockPatches(patches);
+  }
+  // 都不满足 = 内容与结构均无实质变化，不动 store
 }
 
 export type StartResult =
@@ -163,7 +215,7 @@ async function poll(key: string, filePath: string): Promise<void> {
         useSessionsStore.getState().updateSnapshot(key, { pages });
         const pdf = usePdfStore.getState();
         if (pdf.sessionKey === key) {
-          pdf.setPages(pages);
+          applyPagesToStore(pages);
           pdf.setProgress(progress);
         }
       }
@@ -176,7 +228,7 @@ async function poll(key: string, filePath: string): Promise<void> {
       useSessionsStore.getState().updateJob(key, { progress: 100, status: "done" });
       const pdf = usePdfStore.getState();
       if (pdf.sessionKey === key) {
-        pdf.setPages(pages);
+        applyPagesToStore(pages);
         pdf.setResult(status);
         pdf.setProgress(100);
         pdf.setLoading(false);

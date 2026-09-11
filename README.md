@@ -224,6 +224,9 @@ npm run dev
 | POST | `/api/figure/translate` | 表格快照按需译制图 |
 | POST | `/api/block/translate` | 单块手动翻译/重翻 |
 | POST | `/api/block/formula` | 公式块按需识别（bbox 裁剪 → LaTeX） |
+| POST | `/api/export/babeldoc` | 启动排版对照导出（BabelDOC，幂等缓存） |
+| GET | `/api/export/babeldoc/{job_id}` | 导出任务进度/状态 |
+| DELETE | `/api/export/babeldoc/{job_id}` | 取消导出任务 |
 
 ---
 
@@ -312,6 +315,9 @@ PDF-Reader/
 │   │   ├── providers/openai_compat.py  # SiliconFlow/OpenAI 兼容翻译（批翻+减半重试+提示词版本）
 │   │   ├── glossary.py         # 术语表两遍法（全文翻译前抽术语注入提示词）
 │   │   └── sanitize.py         # 回声/融合译文检测、公式块判定、占位符保护、清理
+│   ├── export/
+│   │   ├── babeldoc_export.py  # BabelDOC 导出：任务表/幂等缓存/取消/子进程泵
+│   │   └── babeldoc_worker.py  # 独立 venv 子进程：直调 BabelDOC API + 产物看门狗
 │   ├── cache/file_cache.py     # 内容寻址缓存（原子写/损坏兜底/版本熔断/统计）
 │   └── tests/                  # pytest 单测（91 项，全离线 mock）
 ├── src-tauri/                  # Rust 桌面壳（sidecar 管理、Tauri 命令、导出写盘）
@@ -339,6 +345,24 @@ PDF-Reader/
 > 各阶段的设计决策、实现细节与踩坑记录见 [`docs/`](docs/) 下对应阶段文档；总体约束见 [`docs/开发总纲.md`](docs/开发总纲.md)；发版节奏见 [`docs/版本规划.md`](docs/版本规划.md)。
 
 ---
+
+## 第三方组件
+
+本应用自身以 [MIT](LICENSE) 发布，并依赖以下第三方开源组件：
+
+| 组件 | 许可证 | 版本 | 集成方式 |
+|------|--------|------|----------|
+| [BabelDOC](https://github.com/funstory-ai/BabelDOC) | **AGPL-3.0** | `0.6.4`（版本锁定） | 作为**独立子进程**调用（独立 venv 内运行其 Python API），不链接、不修改、不分发其源码 |
+
+说明：
+
+- 「原版PDF·左右对照」（排版对照导出）功能由 BabelDOC 提供，其版权归 funstory-ai 及
+  BabelDOC 项目原作者所有；应用内置的模型 [DocLayout-YOLO-DocStructBench-onnx](https://github.com/opendatalab/DocLayout-YOLO)
+  权重署名与许可声明予以保留。
+- 本应用定位为本地工具，不分发 BabelDOC 本体；用户在安装/使用该功能时由应用引导
+  自行获取，AGPL 合规边界与上述集成方式一致。
+- 其余依赖（FastAPI、PyMuPDF、React 等均为 MIT/BSD/Apache 系许可）详见
+  `requirements.txt` 与 `package.json`。
 
 ## License
 

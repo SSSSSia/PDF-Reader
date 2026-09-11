@@ -414,6 +414,12 @@ export default function ConfigPage() {
             </span>
           )}
         </div>
+
+        {/* 阶段9-T5：AGPL 合规一行声明（应用无独立关于页，设置页为唯一落点） */}
+        <p className="text-xs leading-relaxed text-slate-400 dark:text-slate-500">
+          「原版PDF·左右对照」排版对照功能基于开源项目 BabelDOC（AGPL-3.0，版本
+          0.6.4）经独立子进程调用实现，版权归 funstory-ai 及 BabelDOC 原作者所有。
+        </p>
       </div>
     </div>
   );

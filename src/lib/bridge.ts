@@ -197,6 +197,17 @@ export async function startBabeldocExport(
   }) as Promise<BabelDocJob>;
 }
 
+/** 探测该文档是否已有排版对照产物（阶段9 验收反馈：命中则免确认直接打开） */
+export async function checkBabeldocCached(filePath: string): Promise<{
+  cached: boolean;
+  dual_path: string;
+  mono_path: string;
+}> {
+  return apiFetch(
+    `${API_BASE}/api/export/babeldoc/cached?file_path=${encodeURIComponent(filePath)}`,
+  ) as Promise<{ cached: boolean; dual_path: string; mono_path: string }>;
+}
+
 /** 查询导出任务进度 */
 export async function getBabeldocStatus(
   jobId: string,

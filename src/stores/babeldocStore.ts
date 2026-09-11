@@ -11,6 +11,7 @@ import {
   startBabeldocExport,
   getBabeldocStatus,
   cancelBabeldoc,
+  checkBabeldocCached,
   type BabelDocJob,
 } from "../lib/bridge";
 
@@ -29,6 +30,9 @@ interface BabelDocState {
   /** 当前文件路径（判断点击时是否换了一篇文档） */
   filePath: string | null;
   start: (filePath: string) => Promise<void>;
+  /** 缓存探测（阶段9 验收反馈）：命中直接进入 done 态免确认打开，
+   *  未命中由调用方弹确认卡。仅 idle 态调用。 */
+  probeCached: (filePath: string) => Promise<boolean>;
   /** 取消进行中的任务（后端 kill 子进程；轮询会把状态收敛为 idle） */
   cancel: (jobId: string) => Promise<void>;
   /** 点按已完成状态：由调用方（按钮）决定打开产物 */
@@ -57,6 +61,28 @@ export const useBabelDocStore = create<BabelDocState>((set, get) => ({
   error: "",
   jobId: null,
   filePath: null,
+
+  probeCached: async (filePath) => {
+    try {
+      const r = await checkBabeldocCached(filePath);
+      if (r.cached && r.dual_path) {
+        set({
+          phase: "done",
+          progress: 100,
+          stage: "",
+          cached: true,
+          dualPath: r.dual_path,
+          error: "",
+          jobId: null,
+          filePath,
+        });
+        return true;
+      }
+    } catch {
+      /* 探测失败按未缓存处理（确认卡兜底） */
+    }
+    return false;
+  },
 
   start: async (filePath: string) => {
     // 同一篇文档的任务进行中/已完成：不重复发（后端也会幂等，这里直接省请求）

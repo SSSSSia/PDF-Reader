@@ -515,6 +515,16 @@ async def api_export_babeldoc(payload: dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.get("/api/export/babeldoc/cached")
+async def api_export_babeldoc_cached(file_path: str):
+    """探测文档是否已有排版对照产物（阶段9 验收反馈：命中则免确认直接打开）。"""
+    from export import babeldoc_export
+
+    return await babeldoc_export.check_cached(
+        file_path, settings.translate_config, settings.cache_dir
+    )
+
+
 @app.get("/api/export/babeldoc/{job_id}")
 async def api_export_babeldoc_status(job_id: str):
     """导出任务进度查询。任务表在内存中，后端重启后未完成任务丢失（产物仍在缓存）。"""

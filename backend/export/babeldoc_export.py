@@ -343,3 +343,26 @@ def _read_log_tail(job: dict, limit: int = 400) -> str:
             return f.read()[-limit:].replace("\n", " ")
     except OSError:
         return ""
+
+
+async def check_cached(file_path: str, translate_config: dict, cache_dir: str) -> dict:
+    """探测文档是否已有排版对照产物（阶段9 验收反馈：缓存命中不应再弹确认卡）。
+
+    前端进入「原版PDF·左右对照」时先调本接口：命中则免确认直接打开，
+    未命中才弹「开始生成」确认卡。只读探测，无副作用。
+    """
+    file_path = (file_path or "").strip()
+    model = (translate_config.get("model") or "").strip()
+    if not file_path or not os.path.isfile(file_path) or not model:
+        return {"cached": False, "dual_path": "", "mono_path": ""}
+
+    from cache.file_cache import file_hash
+
+    pdf_hash = await asyncio.to_thread(file_hash, file_path)
+    out_dir = _output_dir(cache_dir, pdf_hash, model)
+    dual = _find_cached_dual(out_dir)
+    return {
+        "cached": bool(dual),
+        "dual_path": dual or "",
+        "mono_path": _find_cached_mono(out_dir) if dual else "",
+    }

@@ -225,6 +225,7 @@ npm run dev
 | POST | `/api/block/translate` | 单块手动翻译/重翻 |
 | POST | `/api/block/formula` | 公式块按需识别（bbox 裁剪 → LaTeX） |
 | POST | `/api/export/babeldoc` | 启动排版对照导出（BabelDOC，幂等缓存） |
+| GET | `/api/export/babeldoc/cached` | 探测文档是否已有排版对照产物 |
 | GET | `/api/export/babeldoc/{job_id}` | 导出任务进度/状态 |
 | DELETE | `/api/export/babeldoc/{job_id}` | 取消导出任务 |
 

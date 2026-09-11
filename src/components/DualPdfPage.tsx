@@ -5,6 +5,7 @@ import { useBabelDocStore } from "../stores/babeldocStore";
 import { useUiStore, effectiveZoom } from "../stores/uiStore";
 import { useZoomWheel } from "../hooks/useZoomWheel";
 import { usePdfDocument } from "../hooks/usePdfDocument";
+import LoadingSpinner from "./common/LoadingSpinner";
 
 /**
  * 排版对照页（2026-09-10 验收决策：原版PDF·左右对照 = BabelDOC dual PDF）。
@@ -33,6 +34,28 @@ export default function DualPdfPage() {
     ui.setMode("bilingual");
     navigate("/reader/bilingual");
   };
+
+  // 进入模式（无任务态）时静默探测缓存：命中直接打开，未命中才弹确认卡。
+  // 修复 2026-09-11 回归——应用重启后内存态清空，已生成文档也被要求重新生成，
+  // 用户误以为"没保存"。
+  const [probing, setProbing] = useState(false);
+  useEffect(() => {
+    if (phase !== "idle" || !filePath || isLoading) return;
+    let cancelled = false;
+    setProbing(true);
+    void (async () => {
+      let hit = false;
+      try {
+        hit = await useBabelDocStore.getState().probeCached(filePath);
+      } catch {
+        /* 探测失败按未缓存处理，确认卡兜底 */
+      }
+      if (!cancelled && !hit) setProbing(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, filePath, isLoading]);
 
   if (!filePath) {
     return (
@@ -139,6 +162,15 @@ export default function DualPdfPage() {
             返回重排版
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (!dualPath && phase === "idle" && probing) {
+    // 缓存探测中（命中会直接进入渲染分支）
+    return (
+      <div className="flex min-h-0 flex-1 items-center justify-center">
+        <LoadingSpinner />
       </div>
     );
   }

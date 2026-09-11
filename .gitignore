@@ -39,3 +39,6 @@ vite.config.ts.timestamp-*
 logs/
 .venv-babeldoc/
 .venv-babeldoc/
+
+# ZCode 会话工具目录
+.zcode/

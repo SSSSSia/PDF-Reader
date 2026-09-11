@@ -17,7 +17,7 @@ __pycache__/
 .venv_*/
 # 用户个人配置与缓存（含 OCR/翻译 API Key），绝不入库
 config/config.json
-cache/
+/cache/
 .DS_Store
 *.log
 # TypeScript 增量构建产物

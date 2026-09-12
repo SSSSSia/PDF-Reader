@@ -54,28 +54,26 @@
   - 关于/设置页一行声明
   - 顺带复验阶段 7 遗留 T5（双栏缩放适配）与本阶段产物阅读无冲突
     ——该项已由阶段 10 验收覆盖（2026-09-11 批量验收），无需重复复验
-- [ ] **T6 BabelDOC 可选组件化打包（2026-09-11 用户决策；🔶 代码完成 2026-09-12，待发布实跑+人工验收）**
-  - 决策：主安装包不携带 BabelDOC（venv 662MB 会使安装包 72MB→400MB+）；
-    首次进入「左右对照」未检测到环境时应用内引导一键安装，全程不碰命令行
-  - **分发设计（2026-09-12 定稿）**：完整运行时 zip（python-3.12 embeddable
-    自包含 + .venv-babeldoc site-packages，压缩 ~300MB）托管于多源，按国内
-    可达性排序：ModelScope（主源）→ hf-mirror → huggingface.co → GitHub
-    Release（海外兜底）；环境变量 `PDF_READER_BABELDOC_RUNTIME_URLS` 可覆盖；
-    全部不可达时「从本地文件安装」兜底（任意渠道取得 zip 选择即装）
-  - 后端（`export/babeldoc_runtime.py` + 4 端点）：检测链扩展
-    （项目 venv → `<data_dir>/babeldoc-runtime/python.exe`）、后台线程下载
-    （断点续传/多源重试）+ zip-slip 防护解压 + 状态机（downloading/
-    extracting/done/error/cancelled）、`start_export` 未装时文案引导安装卡；
-    单元测试 8 例（zip 校验/逃逸防护/状态机/并发 409/取消）
-  - 前端（DualPdfPage 安装卡）：未安装 → 说明卡（用途/体积/一键同意）+
-    1s 轮询进度（下载 %/解压中/失败重试/取消下载）+ 本地导入按钮；安装完成
-    自动切回确认卡进入正常流程；缓存命中文档无需安装即可查看（产物独立于运行时）
-  - 构建脚本 `scripts/build-babeldoc-runtime.ps1`：embeddable python 下载 →
-    site-packages 拷贝 → `._pth` 启用 site → 冒烟自检（import babeldoc）→
-    zip + sha256；**首次实跑留待发布期**（需网络下载 embeddable python），
-    README「打包发布」含上传清单
-  - 待办：发布期实跑构建脚本 + 上传各源 + 真实 URL 回填 DEFAULT_URLS +
-    删除 venv 的干净环境人工验收安装链路
+- [ ] **T6 BabelDOC 随包捆绑（🔶 代码完成 2026-09-12，待发布实跑+人工验收）**
+  - 方案沿革：2026-09-11 曾决策「可选组件 + 应用内下载」并完成实现（多源
+    国内优先/断点续传/本地导入，git 历史 661a85b 等）；2026-09-12 用户复核
+    后反转——目标用户多为非计算机专业、对软件体积不敏感，下载流程不可控
+    （源可用性/失败重试/包完整性对用户都是负担），**改为直接随包捆绑**，
+    开箱即用零步骤
+  - 体积影响（用户已接受）：安装包 ~72MB → 约 400MB（NSIS/lzma 估算），
+    安装后磁盘 +660MB；首次 BabelDOC 生成仍在线下载版面分析权重 ~50MB
+    （自动尝试 hf/hf-mirror/modelscope，与主链路无关）
+  - 实现：`scripts/build-babeldoc-runtime.ps1` 暂存运行时（python-3.12
+    embeddable 自包含 + `.venv-babeldoc` site-packages + `._pth` 启用
+    site + import babeldoc 冒烟自检，-SkipZip 可跳过留档压缩）→
+    `build-exe.ps1` 自动串联 → tauri `resources` 捆绑落位到后端 exe 同级
+    `babeldoc-runtime/`
+  - 后端检测链（`babeldoc_export.venv_python`）：开发态项目 venv →
+    exe 同级随包运行时（PyInstaller sys.executable 恒指 exe 本体）→
+    `<data_dir>/babeldoc-runtime/`（保留扩展位）；`babeldoc_runtime.py`
+    精简为纯定位模块（无网络行为）；下载链路的 4 端点与前端安装卡同步移除
+  - 待办：发布期实跑（需网络下载 embeddable python ~11MB）+ 干净环境
+    人工验收（无项目 venv 时对照功能开箱即用）
 
 ## 4. 验收标准（全部满足才算完成）
 

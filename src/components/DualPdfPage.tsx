@@ -6,14 +6,6 @@ import { useUiStore, effectiveZoom } from "../stores/uiStore";
 import { useZoomWheel } from "../hooks/useZoomWheel";
 import { usePdfDocument } from "../hooks/usePdfDocument";
 import LoadingSpinner from "./common/LoadingSpinner";
-import {
-  getBabeldocRuntime,
-  installBabeldocRuntime,
-  installBabeldocRuntimeLocal,
-  cancelBabeldocRuntimeInstall,
-  pickRuntimeZip,
-  type BabelDocRuntimeStatus,
-} from "../lib/bridge";
 
 /**
  * 排版对照页（2026-09-10 验收决策：原版PDF·左右对照 = BabelDOC dual PDF）。
@@ -68,10 +60,10 @@ export default function DualPdfPage() {
     navigate("/reader/bilingual");
   };
 
-  // 进入模式（无任务态）时静默探测缓存 + 运行时状态：缓存命中直接打开；
-  // 未命中且组件未安装 → 安装卡（阶段9-T6），已安装 → 确认卡。
+  // 进入模式（无任务态）时静默探测缓存：命中直接打开，未命中才弹确认卡。
+  // 修复 2026-09-11 回归——应用重启后内存态清空，已生成文档也被要求重新生成，
+  // 用户误以为"没保存"。探测以本页文档为准（缓存命中会把任务状态切到本篇）。
   const [probing, setProbing] = useState(false);
-  const [runtime, setRuntime] = useState<BabelDocRuntimeStatus | null>(null);
   useEffect(() => {
     if (phase !== "idle" || !docPath || isLoading) return;
     let cancelled = false;
@@ -83,30 +75,12 @@ export default function DualPdfPage() {
       } catch {
         /* 探测失败按未缓存处理，确认卡兜底 */
       }
-      try {
-        const rt = await getBabeldocRuntime();
-        if (!cancelled) setRuntime(rt);
-      } catch {
-        if (!cancelled) setRuntime(null);
-      }
       if (!cancelled && !hit) setProbing(false);
     })();
     return () => {
       cancelled = true;
     };
   }, [phase, docPath, isLoading]);
-
-  // 安装进行中 1s 轮询进度；done 后本组件经 runtime.installed 切回确认卡
-  useEffect(() => {
-    const p = runtime?.install.phase;
-    if (p !== "downloading" && p !== "extracting") return;
-    const t = setInterval(() => {
-      void getBabeldocRuntime()
-        .then(setRuntime)
-        .catch(() => {});
-    }, 1000);
-    return () => clearInterval(t);
-  }, [runtime]);
 
   if (!docPath) {
     return (
@@ -226,21 +200,6 @@ export default function DualPdfPage() {
     );
   }
 
-  if (!dualPath && runtime && !runtime.installed) {
-    // 阶段9-T6 可选组件：BabelDOC 运行时未安装 → 一键安装卡。
-    // 在线多源（国内源优先）+ 本地 zip 导入兜底；进度经 1s 轮询呈现
-    return (
-      <RuntimeInstallCard
-        runtime={runtime}
-        onDone={() =>
-          void getBabeldocRuntime()
-            .then(setRuntime)
-            .catch(() => {})
-        }
-      />
-    );
-  }
-
   if (!dualPath) {
     // idle：显式确认后才启动（2026-09-11 用户反馈：不要一点模式就自动跑 BabelDOC）。
     // 别的文档对照任务进行中时暂禁启动：两个 BabelDOC worker 并发 ~3.6GB
@@ -274,108 +233,6 @@ export default function DualPdfPage() {
   }
 
   return <DualPdfViewer dualPath={dualPath} />;
-}
-
-const _mb = (b: number) => `${(b / 1e6).toFixed(0)}MB`;
-
-/** 运行时安装卡（阶段9-T6）：BabelDOC 未随安装包内置，首次使用一键安装。
- *  在线安装（后端多源依次尝试，国内源优先，支持断点续传）+ 本地 zip
- *  导入兜底（用户经任意渠道取得包后选择安装）。 */
-function RuntimeInstallCard({
-  runtime,
-  onDone,
-}: {
-  runtime: BabelDocRuntimeStatus;
-  onDone: () => void;
-}) {
-  const inst = runtime.install;
-  const busy = inst.phase === "downloading" || inst.phase === "extracting";
-  const pct = inst.total > 0 ? Math.round((inst.downloaded / inst.total) * 100) : 0;
-
-  const startOnline = () => {
-    void installBabeldocRuntime()
-      .then(onDone)
-      .catch(() => {});
-  };
-  const startLocal = () => {
-    void pickRuntimeZip().then((path) => {
-      if (!path) return;
-      void installBabeldocRuntimeLocal(path)
-        .then(onDone)
-        .catch(() => {});
-    });
-  };
-  const cancel = () => {
-    void cancelBabeldocRuntimeInstall()
-      .then(onDone)
-      .catch(() => {});
-  };
-
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center">
-      <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center dark:border-slate-700 dark:bg-slate-800">
-        <p className="mb-1 text-sm font-medium text-slate-900 dark:text-slate-100">
-          安装排版对照组件
-        </p>
-        <p className="mb-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
-          此功能由 BabelDOC 独立引擎驱动，未随应用内置（体积原因）。
-          {busy
-            ? inst.phase === "extracting"
-              ? "解压安装中…"
-              : `下载中 ${_mb(inst.downloaded)}${inst.total ? ` / ${_mb(inst.total)}` : ""}`
-            : "首次使用需下载运行时包（约 300MB），安装到本机用户目录，之后离线可用。下载自动选择国内可达源；若网络受限，也可从发布页手动下载后导入。"}
-        </p>
-        {busy && (
-          <div
-            className="mx-auto mb-3 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700"
-            style={{ height: 6 }}
-          >
-            <div
-              className="h-full rounded-full bg-blue-600 transition-all duration-300"
-              style={{
-                width: `${inst.phase === "extracting" ? 100 : Math.max(2, pct)}%`,
-              }}
-            />
-          </div>
-        )}
-        {inst.phase === "error" && (
-          <p
-            role="alert"
-            className="mb-3 break-all text-xs text-red-600 dark:text-red-400"
-          >
-            安装失败：{inst.error}
-          </p>
-        )}
-        {inst.phase === "cancelled" && (
-          <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
-            已取消，可随时重新安装。
-          </p>
-        )}
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          {busy ? (
-            inst.phase === "downloading" ? (
-              <button className="btn-secondary" onClick={cancel}>
-                取消下载
-              </button>
-            ) : (
-              <span className="text-xs text-slate-400">请稍候…</span>
-            )
-          ) : (
-            <>
-              <button className="btn-primary" onClick={startOnline}>
-                {inst.phase === "error" || inst.phase === "cancelled"
-                  ? "重试下载"
-                  : "下载并安装"}
-              </button>
-              <button className="btn-secondary" onClick={startLocal}>
-                从本地文件安装
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 /** dual PDF 连续渲染：fit-width × zoom，懒渲染（IntersectionObserver 预载 600px） */

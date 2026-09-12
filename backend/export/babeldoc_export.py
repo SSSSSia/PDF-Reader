@@ -68,15 +68,23 @@ def _venv_python() -> str | None:
 
 
 def venv_python(data_dir: str | None = None) -> str | None:
-    """运行时 python 解析链（阶段9-T6 可选组件化）：
-    开发态项目 venv 优先 → 应用内安装的运行时（<data_dir>/babeldoc-runtime/）。"""
+    """运行时 python 解析链（阶段9-T6 直接捆绑）：
+    1. 开发态项目 venv .venv-babeldoc；
+    2. 随包运行时：与后端 exe 同级的 babeldoc-runtime/（tauri resources 安装位，
+       PyInstaller sys.executable 恒指 exe 本体，打包态即安装目录）；
+    3. 数据目录 <data_dir>/babeldoc-runtime/（保留扩展位）。"""
     p = _venv_python()
     if p:
         return p
-    if data_dir:
-        from export import babeldoc_runtime
+    from export import babeldoc_runtime
 
-        return babeldoc_runtime.runtime_python(data_dir)
+    candidates = [os.path.dirname(os.path.abspath(sys.executable))]
+    if data_dir:
+        candidates.append(data_dir)
+    for parent in candidates:
+        p = babeldoc_runtime.runtime_python(parent)
+        if p:
+            return p
     return None
 
 
@@ -165,7 +173,7 @@ async def start_export(file_path: str, translate_config: dict, cache_dir: str) -
     venv_python = venv_python(os.path.dirname(os.path.abspath(cache_dir)))
     if not venv_python:
         raise ValueError(
-            "BabelDOC 组件未安装：请在「左右对照」视图按提示一键安装（约 300MB，一次安装长期可用）"
+            "BabelDOC 运行时缺失（正常安装包内自带）——请重新下载完整版安装包"
         )
 
     from cache.file_cache import file_hash

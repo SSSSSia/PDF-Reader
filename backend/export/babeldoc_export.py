@@ -59,12 +59,25 @@ def _project_root() -> str:
 
 
 def _venv_python() -> str | None:
-    """BabelDOC 独立 venv 的 python 路径；未安装返回 None。"""
+    """BabelDOC 独立 venv 的 python 路径（开发态项目 venv）；未安装返回 None。"""
     if sys.platform == "win32":
         p = os.path.join(_project_root(), ".venv-babeldoc", "Scripts", "python.exe")
     else:
         p = os.path.join(_project_root(), ".venv-babeldoc", "bin", "python")
     return p if os.path.isfile(p) else None
+
+
+def venv_python(data_dir: str | None = None) -> str | None:
+    """运行时 python 解析链（阶段9-T6 可选组件化）：
+    开发态项目 venv 优先 → 应用内安装的运行时（<data_dir>/babeldoc-runtime/）。"""
+    p = _venv_python()
+    if p:
+        return p
+    if data_dir:
+        from export import babeldoc_runtime
+
+        return babeldoc_runtime.runtime_python(data_dir)
+    return None
 
 
 def _worker_path() -> str:
@@ -149,10 +162,10 @@ async def start_export(file_path: str, translate_config: dict, cache_dir: str) -
     if not api_url or not api_key or not model:
         raise ValueError("API 配置不完整（api_url / api_key / model），请先在设置中完成配置")
 
-    venv_python = _venv_python()
+    venv_python = venv_python(os.path.dirname(os.path.abspath(cache_dir)))
     if not venv_python:
         raise ValueError(
-            "BabelDOC 环境未安装（缺少 .venv-babeldoc），请按 docs/阶段9-BabelDOC双语PDF.md 安装"
+            "BabelDOC 组件未安装：请在「左右对照」视图按提示一键安装（约 300MB，一次安装长期可用）"
         )
 
     from cache.file_cache import file_hash

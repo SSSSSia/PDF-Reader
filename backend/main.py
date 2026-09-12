@@ -540,6 +540,55 @@ async def api_export_babeldoc_running():
     return babeldoc_export.list_running_exports()
 
 
+# ---------------- 阶段9-T6：BabelDOC 运行时（可选组件）管理 ----------------
+
+@app.get("/api/export/babeldoc/runtime")
+async def api_export_babeldoc_runtime():
+    """运行时状态（阶段9-T6）：是否已安装 + 安装进度（前端据此显示安装卡）。"""
+    from export import babeldoc_export, babeldoc_runtime
+
+    py = babeldoc_export.venv_python(settings.data_dir)
+    return {
+        "installed": bool(py),
+        "python_path": py or "",
+        "version": babeldoc_runtime.installed_version(settings.data_dir),
+        "install": babeldoc_runtime.get_state(),
+    }
+
+
+@app.post("/api/export/babeldoc/runtime/install")
+async def api_export_babeldoc_runtime_install():
+    """一键在线安装运行时（多源依次尝试，国内源优先）；进行中重复调用转 409。"""
+    from export import babeldoc_runtime
+
+    try:
+        return babeldoc_runtime.start_install(settings.data_dir)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/api/export/babeldoc/runtime/install-local")
+async def api_export_babeldoc_runtime_install_local(payload: dict):
+    """从本地 zip 安装运行时（国内网络兜底：用户经任意渠道取得包后选择安装）。"""
+    from export import babeldoc_runtime
+
+    try:
+        return babeldoc_runtime.start_install_local(
+            str(payload.get("path") or ""), settings.data_dir
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/export/babeldoc/runtime/cancel")
+async def api_export_babeldoc_runtime_cancel():
+    """取消进行中的安装（下载阶段即时生效；解压阶段很快，忽略取消）。"""
+    from export import babeldoc_runtime
+
+    babeldoc_runtime.cancel_install()
+    return babeldoc_runtime.get_state()
+
+
 @app.get("/api/export/babeldoc/{job_id}")
 async def api_export_babeldoc_status(job_id: str):
     """导出任务进度查询。任务表在内存中，后端重启后未完成任务丢失（产物仍在缓存）。"""

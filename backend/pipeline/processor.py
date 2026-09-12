@@ -346,16 +346,23 @@ _GENERIC_HEADINGS = {
 }
 
 
-def _extract_doc_title(pages: list) -> str:
-    """论文标题（管线与缓存重建共用）。只在首页找，两级优先级：
+def _extract_doc_title(pages: list, file_path: str | None = None) -> str:
+    """论文标题（管线与缓存重建共用）。
 
-    1. 首个非通用章节名、无编号的 # 标题块（DALK 型：标题本身就是 heading）；
-    2. 首页首个正文块（TOG 型实测：标题是无 # 的独立全大写行，
-       "Published as a conference paper" 横幅已被切分噪音过滤剔除）。
-
-    通用章节名（Abstract 等）与编号章节头（"1 Introduction"、"2.1.2
-    EXPLORATION"）一律跳过；找不到返回空串（索引标题回退源文件名）。
+    2026-09-12 标题根治：**几何证据优先**——第 1 页字号最大、最靠上的连续行
+    就是标题（学术排版铁律，对任何版式成立；PDF metadata 互证），文本启发式
+    降为兜底。历史上的两级优先级（首个 # 标题块 / 首个正文块）保留为
+    file_path 缺失或几何检测失败时的回退。
     """
+    if file_path:
+        try:
+            from ocr.title_detect import detect_title
+
+            t = detect_title(file_path)
+            if t:
+                return t
+        except Exception as e:  # noqa: BLE001 —— 几何检测失败回退文本启发式
+            print(f"[title] 几何检测失败，回退文本启发式: {e}")
     if not pages:
         return ""
     first = pages[0]
@@ -389,6 +396,39 @@ def _is_generic_heading(text: str) -> bool:
     norm = norm.rstrip(":：").strip()
     norm = re.sub(r"^\d+(\.\d+)*\s+", "", norm).lower()
     return norm in _GENERIC_HEADINGS
+
+
+def _norm_title(s: str) -> str:
+    """标题比对归一化：只留字母/数字/中日韩，忽略大小写、标点、空白与记号。"""
+    return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", s).lower()
+
+
+def _ensure_title_heading(pages: list, doc_title: str) -> None:
+    """页 0 标题块矫正（2026-09-12 标题根治）：几何证据认定的标题若在首页
+    以纯文本块存在（textlayer 降级/拆分历史误伤形态），提升为 "# " 标题块
+    ——读者看到的与证据认定的一致。必须在页眉剔除之前调用（裸标题块
+    与 doc_title 相同会被 _remove_running_header 当页眉吃掉）。"""
+    if not doc_title:
+        return
+    nt = _norm_title(doc_title)
+    if len(nt) < 8:
+        return
+    for b in pages[0]["blocks"]:
+        text = (b.get("original") or "").strip()
+        if not text or text.startswith("#"):
+            continue
+        nb = _norm_title(text)
+        if not nb:
+            continue
+        matched = (
+            nb == nt
+            or (len(nt) >= 15 and nb.startswith(nt))
+            or (len(nb) >= 15 and nt.startswith(nb))
+        )
+        if matched:
+            b["original"] = "# " + text
+            print(f"[title] 页0标题块矫正为 heading：{text[:60]!r}")
+            return
 
 
 def _remove_running_header(pages: list, doc_title: str) -> None:
@@ -497,9 +537,11 @@ async def _process_pipeline(file_path: str, job_id: str, pdf_hash: str):
         # 把每页「整块 markdown」切成段/句级 block（对照粒度，见决策），
         # 切块发生在 OCR 缓存读取之后，因此不动 OCR 缓存粒度。
         pages = [_split_page(p) for p in pages]
-        # 论文标题（首个 # 标题块）提前到合并前提取：页眉运行标题剔除
-        # 必须发生在合并之前，防止裸标题行被当成续段合并目标误接
-        doc_title = _extract_doc_title(pages)
+        # 论文标题（几何证据优先，文本启发式兜底）提前到合并前提取：页眉运行
+        # 标题剔除必须发生在合并之前，防止裸标题行被当成续段合并目标误接
+        doc_title = _extract_doc_title(pages, file_path)
+        # 页0标题块矫正（提升为 # heading）必须在页眉剔除之前
+        _ensure_title_heading(pages, doc_title)
         # 页眉运行标题（ACM/期刊版式每页重复的裸标题行，Survey 实测每页
         # 一块、还被模型回声成"假译文"）：与文档标题相同的块剔除。
         # 真标题块带 "# " 前缀不受影响；比对时去掉 markdown 强调符
@@ -918,7 +960,8 @@ async def open_cached_doc(pdf_hash: str, page_count: int, file_path: str) -> dic
         raise ValueError("该文档的提取缓存已不存在，请重新翻译")
 
     pages = [_split_page(p) for p in pages]
-    doc_title = _extract_doc_title(pages)
+    doc_title = _extract_doc_title(pages, file_path)
+    _ensure_title_heading(pages, doc_title)
     _remove_running_header(pages, doc_title)
     pages = _merge_cross_page(pages)
 

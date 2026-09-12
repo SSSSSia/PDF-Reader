@@ -134,3 +134,64 @@ def test_normal_short_paragraph_kept():
     """正常短段不受碎片去重影响。"""
     md = "This is the full first paragraph with enough content here.\n\nShort note."
     assert _split_glued_columns(md) == md
+
+
+# ── 标题缺失根治回归（2026-09-12 反馈③：DALK/FG-RAG 首页标题丢失）──────
+
+DALK_TITLE = (
+    "# **DALK: Dynamic Co-Augmentation of LLMs and KG to answer "
+    "Alzheimer’s Disease Questions with Scientific Literature**"
+)
+
+
+def test_long_academic_title_kept():
+    """DALK 实测：17 词学术真标题不再被 ≥14 词规则误降级（无句子证据）。"""
+    assert _demote_sentence_headings(DALK_TITLE) == DALK_TITLE
+
+
+def test_first_heading_of_first_page_protected():
+    """页 0 首个标题位置豁免：即使带句子证据词也保留（句末标点仍降级）。"""
+    src = (
+        "# **A very long emphasized sentence that keeps going and going "
+        "with many words inside**\n\n正文段落。"
+    )
+    assert _demote_sentence_headings(src, protect_first=True).startswith("# ")
+
+
+def test_protect_first_only_shields_first_heading():
+    """豁免只保护首个标题，页内后续超长伪标题仍降级。"""
+    src = (
+        "# **Real Paper Title Stays As A Heading Here**\n\n"
+        "# **A very long emphasized sentence that keeps going and going "
+        "with many words inside**"
+    )
+    out = _demote_sentence_headings(src, protect_first=True)
+    assert out.startswith("# **Real Paper Title")
+    assert "**A very long emphasized" in out
+
+
+def test_title_paragraph_survives_acm_ref_tail_match():
+    """FG-RAG 实测：ACM 引用段合法含有标题全文，标题段（# 开头）不得被
+    段尾跨栏截除规则误杀。"""
+    md = (
+        "# **Context-Aware Fine-Grained Graph RAG for Query-Focused "
+        "Summarization** \n\n"
+        "Yubin Hong \n\n"
+        "Yubin Hong, Chaofan Li, Jingyi Zhang, and Yingxia Shao. 2025. "
+        "Context-Aware Fine-Grained Graph RAG for Query-Focused "
+        "Summarization. In Proceedings of the ACM Web Conference 2025."
+    )
+    out = _split_glued_columns(md)
+    assert out.splitlines()[0].startswith(
+        "# **Context-Aware Fine-Grained Graph RAG"
+    )
+
+
+def test_heading_not_dropped_as_prefix_fragment():
+    """规则③同样豁免标题段：标题是后续段前缀时不再整段丢弃。"""
+    md = (
+        "## **Graph Augmentation Methods** \n\n"
+        "Graph Augmentation Methods form the core of our pipeline and "
+        "iteratively refine the candidate sub-graphs retrieved above"
+    )
+    assert _split_glued_columns(md).startswith("## **Graph Augmentation")

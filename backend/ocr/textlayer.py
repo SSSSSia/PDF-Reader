@@ -170,17 +170,34 @@ _HEADING_STRIP = re.compile(r"[*_`\"'\u201c\u201d\u2018\u2019()\[\]]")
 _SENT_END = re.compile(r"[?！？!.\u3002][\"'\u201d\u2019)]*$")
 # 数字编号开头的真标题（"1. Introduction"、"4.2 Method"）
 _NUM_HEADING = re.compile(r"^\d+(\.\d+)*[.:）)]?\s")
+# 句子证据词（代词/系动词/情态动词/关系与指示词），小写词面精确匹配——
+# 学术标题内这些词几乎总以大写出现（"Attention Is All You Need"），
+# 正文句子里则是小写（阶段11-T6 后登记的标题缺失根治，2026-09-12）
+_SENT_EVIDENCE = re.compile(
+    r"\b(we|our|ours|us|i|me|my|you|your|they|their|them|it|its|he|she|his|her"
+    r"|is|are|was|were|be|been|being|am|has|have|had|do|does|did"
+    r"|will|would|shall|should|can|could|may|might|must"
+    r"|that|this|these|those|which|who|whose|whom|there|here)\b"
+)
 
 
-def _demote_sentence_headings(md: str) -> str:
+def _demote_sentence_headings(md: str, protect_first: bool = False) -> str:
     """把句子特征明确的 markdown 标题行降级为粗体段落。
 
     判定（对去符号裸文本）：
     - 以 ?/！/。 类句末标点结尾（允许尾随引号）→ 问句/感叹句，降级；
       但句号结尾需同时 ≥6 词且非数字编号开头（真标题偶带句号，
       如 "1. Introduction."——编号开头或过短的保留）；
-    - ≥14 词的超长"标题"基本都是句子，直接降级。
+    - ≥14 词且带句子证据（小写开头，或含小写句法证据词）才降级。
+      2026-09-12 收窄：原先 ≥14 词一律降级，把 DALK 等长学术真标题
+      （普遍 >14 词）误降为粗体段——下游续段合并把无终止符的降级标题
+      当未完结段链式吞掉后续块（首页粘成一整块），页眉剔除又按
+      "与文档标题相同"把降级标题块整体吃掉，标题彻底丢失；
+    - protect_first：首页（页 0）首个标题是论文标题的位置证据，
+      豁免 ≥14 词规则（句末标点规则仍适用——真标题不以问号结尾）。
     降级产物保留原行内部的全部强调标记，只去掉行首 #。"""
+
+    first = _HEADING_LINE.search(md) if protect_first else None
 
     def repl(m: re.Match) -> str:
         body = m.group(2)
@@ -195,7 +212,10 @@ def _demote_sentence_headings(md: str) -> str:
                 and (_NUM_HEADING.match(plain) or words < 6)
             )
         elif words >= 14:
-            demote = True  # 超长"标题"基本都是句子
+            is_first = first is not None and m.start() == first.start()
+            demote = not is_first and (
+                plain[:1].islower() or bool(_SENT_EVIDENCE.search(plain))
+            )
         if not demote:
             return m.group(0)
         # body 已被 **..** 整体包裹时直接去 #（再包一层会出 **** 四星）
@@ -282,11 +302,17 @@ def _split_glued_columns(md: str) -> str:
             else [para]
         )
         for seg in segs:
+            # 结构性标题段（# 开头）豁免规则②③（2026-09-12 FG-RAG 实测）：
+            # ACM 引用段/页眉行里合法含有标题全文，标题段的"尾部窗口在其它
+            # 段落出现"并非跨栏吸入而是正常引用——据此截除会把整段标题截空；
+            # 规则③同理（标题是后续段的自然前缀情形不适用）。标题去留交给
+            # 规则①（粘连拆分升级）与 processor 页眉剔除（# 前缀块豁免）。
+            is_heading = seg.lstrip().startswith("#")
             # 2) 段尾跨栏重复片段截除：尾部窗口（词数从多到少）归一化后
             #    在其它段落中完整出现 → 该片段是吸进来的右栏内容，
             #    截除（内容已在别处，无损失）；截除后前文过短则整段丢弃
             words = seg.split()
-            if len(words) > _MIN_TAIL_WORDS:
+            if not is_heading and len(words) > _MIN_TAIL_WORDS:
                 for w in range(min(len(words) - 1, _MAX_TAIL_WORDS),
                                _MIN_TAIL_WORDS - 1, -1):
                     tail_plain = _md_plain(" ".join(words[-w:]))
@@ -302,7 +328,7 @@ def _split_glued_columns(md: str) -> str:
             # 3) 独立碎片段去重：剥掉列表标记后是其它段落的更长前缀
             #    （y 带交错截出的残缺重复块，EMNLP 版 DALK p4 实测）
             frag = _LEADING_NUM.sub("", plain)
-            if len(frag) >= _MIN_FRAG_PLAIN:
+            if not is_heading and len(frag) >= _MIN_FRAG_PLAIN:
                 for j, pl in enumerate(plains):
                     if j != i and pl.startswith(frag) and len(pl) > len(frag) + 10:
                         plain = ""
@@ -773,8 +799,10 @@ def extract_pages(
                 md = _clean_html(md)
                 # 斜体误判上标还原（DALK 实测 ⁱⁿⁱtⁱal/ⁿode/post⁻processⁱⁿg）
                 md = _fix_italic_superscripts(md)
-                # 伪标题降级：大字号强调句被误判成标题会巨字渲染+翻译劣化
-                md = _demote_sentence_headings(md)
+                # 伪标题降级：大字号强调句被误判成标题会巨字渲染+翻译劣化。
+                # 页 0 首个标题是论文标题的位置证据，豁免长标题降级
+                # （DALK/FG-RAG 标题丢失根治，2026-09-12）
+                md = _demote_sentence_headings(md, protect_first=(pno == 0))
                 # 跨栏粘连段拆分：单位行+行中 Abstract 标题+右栏片段合成一段
                 md = _split_glued_columns(md)
                 if image_dir:

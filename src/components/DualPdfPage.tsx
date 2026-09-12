@@ -20,24 +20,37 @@ import LoadingSpinner from "./common/LoadingSpinner";
  * 现有翻译缓存）；同文档第二次起走 BabelDOC 内部缓存秒开。
  * 缩放沿用原版机制（fit-width × zoom，缺省 70%，Ctrl+滚轮/工具栏通用）。
  */
+/** 路径归一化（Windows 大小写/分隔符差异不敏感），用于任务-文档归属比对 */
+const normPath = (p: string) => p.replace(/[\\/]+/g, "/").toLowerCase();
+
 export default function DualPdfPage() {
-  const { filePath, isLoading, progress: mainProgress } = usePdfStore();
   const {
-    phase,
-    progress,
-    stage,
-    dualPath,
-    error,
-    jobId,
-    filePath: babeldocFilePath,
-    start,
-    clearError,
-  } = useBabelDocStore();
+    filePath: sessionPath,
+    sessionKey,
+    isLoading,
+    progress: mainProgress,
+  } = usePdfStore();
+  const bdoc = useBabelDocStore();
   const navigate = useNavigate();
   const zoomRef = useZoomWheel<HTMLDivElement>();
-  // F5 重接管场景（阶段11-T5）：pdfStore 会话为空，任务路径在 babeldocStore
-  // ——回落，否则「请先打开一篇 PDF」门禁挡住进度/产物（2026-09-12 用户反馈）
-  const effectivePath = filePath || babeldocFilePath || "";
+
+  // 本页归属文档的路径：活跃会话的文件路径；F5 重接管时会话为空 → 回落
+  // 任务自带路径（此时两者同源）。会话存在但源文件缺失 → 空串。
+  const docPath = normPath(
+    sessionPath || (sessionKey ? "" : bdoc.filePath || ""),
+  );
+
+  // babeldocStore 是全局单例（同时只记录一个任务的状态）：仅当任务路径与
+  // 本页文档一致时才采信，否则一律按 idle 处理——否则切换文档后会把
+  // 上一篇的 dualPath/进度渲染到这一篇（2026-09-12 用户实测：打开 DALK
+  // 的对照，显示的却是 FG-RAG 的论文）
+  const mine = docPath !== "" && normPath(bdoc.filePath ?? "") === docPath;
+  const phase = mine ? bdoc.phase : "idle";
+  const progress = mine ? bdoc.progress : 0;
+  const stage = mine ? bdoc.stage : "";
+  const dualPath = mine ? bdoc.dualPath : "";
+  const jobId = mine ? bdoc.jobId : null;
+  const error = mine ? bdoc.error : "";
 
   const backToBilingual = () => {
     // 必须同步复位 readerMode，否则仍停留在原版形态（"暂不"点击无反应根因）
@@ -49,16 +62,16 @@ export default function DualPdfPage() {
 
   // 进入模式（无任务态）时静默探测缓存：命中直接打开，未命中才弹确认卡。
   // 修复 2026-09-11 回归——应用重启后内存态清空，已生成文档也被要求重新生成，
-  // 用户误以为"没保存"。
+  // 用户误以为"没保存"。探测以本页文档为准（缓存命中会把任务状态切到本篇）。
   const [probing, setProbing] = useState(false);
   useEffect(() => {
-    if (phase !== "idle" || !effectivePath || isLoading) return;
+    if (phase !== "idle" || !docPath || isLoading) return;
     let cancelled = false;
     setProbing(true);
     void (async () => {
       let hit = false;
       try {
-        hit = await useBabelDocStore.getState().probeCached(effectivePath);
+        hit = await useBabelDocStore.getState().probeCached(docPath);
       } catch {
         /* 探测失败按未缓存处理，确认卡兜底 */
       }
@@ -67,9 +80,9 @@ export default function DualPdfPage() {
     return () => {
       cancelled = true;
     };
-  }, [phase, effectivePath, isLoading]);
+  }, [phase, docPath, isLoading]);
 
-  if (!effectivePath) {
+  if (!docPath) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center py-20 text-center">
         <p className="mb-4 text-slate-600 dark:text-slate-300">
@@ -95,8 +108,8 @@ export default function DualPdfPage() {
             <button
               className="btn-secondary"
               onClick={() => {
-                clearError();
-                void start(effectivePath);
+                bdoc.clearError();
+                void bdoc.start(docPath);
               }}
             >
               重试
@@ -188,7 +201,10 @@ export default function DualPdfPage() {
   }
 
   if (!dualPath) {
-    // idle：显式确认后才启动（2026-09-11 用户反馈：不要一点模式就自动跑 BabelDOC）
+    // idle：显式确认后才启动（2026-09-11 用户反馈：不要一点模式就自动跑 BabelDOC）。
+    // 别的文档对照任务进行中时暂禁启动：两个 BabelDOC worker 并发 ~3.6GB
+    // （单 worker RSS 峰值 1.8GB 实测），与 2026-09-11 内存耗尽崩溃同源
+    const busyElsewhere = bdoc.phase === "running" && !mine;
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center">
         <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 text-center dark:border-slate-700 dark:bg-slate-800">
@@ -198,10 +214,17 @@ export default function DualPdfPage() {
           <p className="mb-4 text-xs leading-relaxed text-slate-500 dark:text-slate-400">
             将启动 BabelDOC 独立管线，对整篇 PDF 重新解析并翻译：首跑约数分钟、
             消耗模型额度（无法复用现有翻译缓存）；同文档生成过一次后秒开。
+            {busyElsewhere
+              ? "另一篇文档的对照生成正在进行，完成后才能开始本篇（避免双 worker 内存争抢）。"
+              : ""}
           </p>
           <div className="flex justify-center">
-            <button className="btn-primary" onClick={() => void start(effectivePath)}>
-              开始生成
+            <button
+              className="btn-primary"
+              disabled={busyElsewhere}
+              onClick={() => void bdoc.start(docPath)}
+            >
+              {busyElsewhere ? "等待另一篇生成完成" : "开始生成"}
             </button>
           </div>
         </div>

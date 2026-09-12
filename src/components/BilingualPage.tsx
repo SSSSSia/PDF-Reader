@@ -90,7 +90,7 @@ const BilingualBlockRow = memo(function BilingualBlockRow({
  * 缩放 prose 根字号（工具栏/页签为 chrome 不缩放；原版分支由 pdfjs scale 走）。
  */
 export default function BilingualPage() {
-  const { pages, isLoading, progress, error } = usePdfStore();
+  const { pages, isLoading, progress, error, file } = usePdfStore();
   const readerMode = useUiStore((s) => s.readerMode);
   // 阶段7-T2：用户未手动设置过缩放（null）时，重排版缺省 100%（排版基准）
   const zoom = useUiStore((s) => s.zoom) ?? 1;
@@ -180,7 +180,7 @@ export default function BilingualPage() {
           className="flex h-7 shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 dark:border-slate-700 dark:bg-slate-900"
         >
           <span className="truncate text-xs text-slate-500 dark:text-slate-400">
-            正在翻译，已完成的段落实时显示…
+            正在翻译「{(file?.name ?? "").replace(/\.pdf$/i, "")}」，已完成的段落实时显示…
           </span>
           <div className="flex shrink-0 items-center gap-2">
             <div className="h-1 w-28 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">

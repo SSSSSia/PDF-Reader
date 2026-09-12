@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { usePdfStore } from "../../stores/pdfStore";
 import { useSessionsStore } from "../../stores/sessionsStore";
-import { EXTRACT_DONE } from "../../lib/translationManager";
+import { EXTRACT_DONE, currentTranslationKey } from "../../lib/translationManager";
 
 /**
  * 自绘标题栏（阶段10-T3；2026-09-10 验收反馈二次改造）：
@@ -114,8 +114,12 @@ export default function TitleBar() {
         <div className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1.5">
           {ordered.map((s) => {
             const active = s.key === sessionKey;
-            const running = s.job?.status === "running";
-            const failed = s.job?.status === "failed";
+            // 运行中 = 状态 running 且是当前活跃翻译任务（同一时间仅 1 个）。
+            // 状态 running 但不属于活跃任务的是轮询已死亡的冻结残留——
+            // 按中断呈现（红点、不显示冻结时的假百分比），2026-09-12 用户反馈
+            const running = s.job?.status === "running" && s.key === currentTranslationKey();
+            const interrupted = s.job?.status === "running" && !running;
+            const failed = s.job?.status === "failed" || interrupted;
             return (
               <div
                 key={s.key}
@@ -129,7 +133,13 @@ export default function TitleBar() {
                     handleActivate(s.key);
                   }
                 }}
-                title={running ? `翻译中 ${Math.round(s.job?.progress ?? 0)}%` : s.title}
+                title={
+                  running
+                    ? `翻译中 ${Math.round(s.job?.progress ?? 0)}%`
+                    : interrupted
+                      ? "翻译已中断，重新打开该文档可继续"
+                      : s.title
+                }
                 className={`group flex h-7 max-w-[13rem] shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors duration-150 ${
                   active
                     ? "border-slate-200 bg-white font-medium text-slate-900 shadow-sm dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100"

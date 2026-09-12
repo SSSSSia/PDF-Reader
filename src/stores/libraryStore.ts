@@ -30,8 +30,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   folders: [],
   loaded: false,
   fetchAll: async () => {
-    const { docs, folders } = await listDocs();
-    set({ docs, folders, loaded: true });
+    // 保底重试：App 级后端就绪门之后仍可能有秒级竞态（就绪判定刚过、
+    // uvicorn 连接未热等），失败退避重试 3 次再抛
+    let lastErr: unknown;
+    for (let i = 0; i < 3; i++) {
+      try {
+        const { docs, folders } = await listDocs();
+        set({ docs, folders, loaded: true });
+        return;
+      } catch (e) {
+        lastErr = e;
+        await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+      }
+    }
+    throw lastErr;
   },
   createFolder: async (name) => {
     await createFolder(name);

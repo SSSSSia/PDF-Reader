@@ -240,6 +240,25 @@ export async function listRunningExports(): Promise<
 }
 
 /**
+ * 等待本地后端就绪（打包版首启专用，2026-09-13 用户实测 bug）：
+ * sidecar 是 66MB PyInstaller onefile，首次启动要解压引导 + Defender 全量
+ * 扫描新装 exe，可能耗时数十秒；此前各页面首查失败即永挂加载态。
+ * 每 1s 探测一次 /api/health，最长 120s；就绪/超限返回。
+ */
+export async function waitForBackend(timeoutMs = 120_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await fetch(`${API_BASE}/api/health`);
+      return true;
+    } catch {
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  return false;
+}
+
+/**
  * 用系统默认程序打开本地 PDF。
  * Tauri 走 plugin-shell open（本地绝对路径）；浏览器经后端原始文件接口。
  */

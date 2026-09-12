@@ -239,6 +239,65 @@ export async function listRunningExports(): Promise<
   >;
 }
 
+// ── BabelDOC 运行时管理（阶段9-T6 可选组件） ─────────────────────────────
+
+export interface BabelDocRuntimeInstallState {
+  phase: "idle" | "downloading" | "extracting" | "done" | "error" | "cancelled";
+  downloaded: number;
+  total: number;
+  error: string;
+  url: string;
+}
+
+export interface BabelDocRuntimeStatus {
+  installed: boolean;
+  python_path: string;
+  version: string;
+  install: BabelDocRuntimeInstallState;
+}
+
+/** 运行时状态：是否已安装 + 安装进度（安装卡轮询用） */
+export async function getBabeldocRuntime(): Promise<BabelDocRuntimeStatus> {
+  return apiFetch(
+    `${API_BASE}/api/export/babeldoc/runtime`,
+  ) as Promise<BabelDocRuntimeStatus>;
+}
+
+/** 一键在线安装（后端多源依次尝试，国内源优先；进行中返回 409 抛错） */
+export async function installBabeldocRuntime(): Promise<BabelDocRuntimeStatus> {
+  return apiFetch(`${API_BASE}/api/export/babeldoc/runtime/install`, {
+    method: "POST",
+  }) as Promise<BabelDocRuntimeStatus>;
+}
+
+/** 从本地 zip 安装（国内网络兜底：任意渠道取得包后选择安装） */
+export async function installBabeldocRuntimeLocal(
+  path: string,
+): Promise<BabelDocRuntimeStatus> {
+  return apiFetch(`${API_BASE}/api/export/babeldoc/runtime/install-local`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  }) as Promise<BabelDocRuntimeStatus>;
+}
+
+/** 取消安装（下载阶段即时生效） */
+export async function cancelBabeldocRuntimeInstall(): Promise<void> {
+  await apiFetch(`${API_BASE}/api/export/babeldoc/runtime/cancel`, {
+    method: "POST",
+  });
+}
+
+/** 选择运行时 zip 文件（Tauri 系统对话框；浏览器模式无对应能力返回 null） */
+export async function pickRuntimeZip(): Promise<string | null> {
+  if (!isTauri()) return null;
+  const selected = await tauriOpen({
+    title: "选择 BabelDOC 运行时包",
+    filters: [{ name: "运行时包", extensions: ["zip"] }],
+  });
+  return (selected as string | null) ?? null;
+}
+
 /**
  * 用系统默认程序打开本地 PDF。
  * Tauri 走 plugin-shell open（本地绝对路径）；浏览器经后端原始文件接口。

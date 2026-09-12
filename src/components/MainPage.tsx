@@ -54,6 +54,9 @@ export default function MainPage() {
     progress: number;
     doc: DocMeta;
   } | null>(null);
+  // 打开文献遇「提取缓存已不存在」（TEXT_LAYER_MODEL 版本熔断/缓存清空）
+  // → 确认后重新提取并复用译文缓存（2026-09-12：v17 升级后点卡片死路）
+  const [reextract, setReextract] = useState<{ doc: DocMeta } | null>(null);
   const [query, setQuery] = useState("");
   // 「移动到文件夹」菜单当前展开的文档（null = 关闭）
   const [menuDoc, setMenuDoc] = useState<DocMeta | null>(null);
@@ -257,7 +260,13 @@ export default function MainPage() {
       navigatedRef.current = true; // 直接导航，避免 pages effect 重复跳转
       navigate("/reader/bilingual");
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      // 提取缓存失效且源文件路径在：给一键重提取入口，点卡片不再死路
+      if (msg.includes("提取缓存") && doc.file_path) {
+        setReextract({ doc });
+      } else {
+        setError(msg);
+      }
     } finally {
       setOpeningId(null);
     }
@@ -715,6 +724,37 @@ export default function MainPage() {
           setAttachPrompt(null);
           if (p) void handleOpenDoc(p.doc, { skipAttachCheck: true });
         }}
+      />
+
+      {/* 提取缓存失效（应用升级熔断/缓存清空）→ 确认后重新提取 */}
+      <ConfirmDialog
+        open={reextract !== null}
+        title={`「${reextract?.doc.title ?? ""}」的提取缓存已失效`}
+        description="应用升级后需要重新提取原文排版。将复用已有译文，只有变化的段落（如标题）会重新翻译，几乎不产生新费用。需要源文件仍在原位置。"
+        confirmText="重新提取并打开"
+        onConfirm={() => {
+          const doc = reextract?.doc;
+          setReextract(null);
+          if (!doc?.file_path) return;
+          const { configLoaded, isConfigured } = useConfigStore.getState();
+          if (configLoaded && !isConfigured) {
+            setError("请先在设置中配置 API Key，再添加文章");
+            return;
+          }
+          if (currentTranslationKey()) {
+            setError("已有翻译任务进行中，请等待完成后再添加新任务");
+            return;
+          }
+          navigatedRef.current = false;
+          pagesWereEmptyRef.current = true;
+          void startTranslation(
+            doc.file_path,
+            `${doc.title}.pdf`,
+          ).then((r) => {
+            if (!r.ok) setError(r.reason);
+          });
+        }}
+        onCancel={() => setReextract(null)}
       />
     </div>
   );

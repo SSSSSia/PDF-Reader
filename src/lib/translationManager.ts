@@ -18,6 +18,14 @@ const MAX_WAIT_MS = 30 * 60 * 1000; // 30 分钟上限，避免无限轮询
 /** 状态接口连续失败上限（网络瞬断重试，超限判定失败） */
 const MAX_POLL_ERRORS = 3;
 
+/**
+ * 提取阶段完成阈值（后端 progress 里程碑：8=逐页提取开始、30=提取完成、
+ * 100=翻译完成，见 backend/pipeline/processor.py）。进入阅读页的门禁取
+ * 31 而非 30：30 只是提取完成的临界值，用户实测此刻排版尚未彻底定型
+ * （2026-09-12 阶段11-T6）。主页进度卡自动跳转与标题栏 tab 门禁共用。
+ */
+export const EXTRACT_DONE = 31;
+
 let runningKey: string | null = null;
 
 /** 当前进行中的翻译会话 key（文献库进度卡/页签用） */

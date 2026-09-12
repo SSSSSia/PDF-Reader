@@ -5,7 +5,12 @@ import { useUiStore } from "../stores/uiStore";
 import { useLibraryStore } from "../stores/libraryStore";
 import { useSessionsStore } from "../stores/sessionsStore";
 import { useConfigStore } from "../stores/configStore";
-import { startTranslation, attach, currentTranslationKey } from "../lib/translationManager";
+import {
+  startTranslation,
+  attach,
+  currentTranslationKey,
+  EXTRACT_DONE,
+} from "../lib/translationManager";
 import ConfirmDialog from "./common/ConfirmDialog";
 import {
   openFileDialog,
@@ -26,9 +31,6 @@ import LoadingSpinner from "./common/LoadingSpinner";
  * - 空状态保留整块拖拽上传区；有文献后仍支持整页拖入 PDF；
  * - 翻译进度内联显示，OCR 完成自动进入阅读页；点击卡片缓存秒开。
  */
-// 提取阶段完成阈值：后端 progress 里程碑 8=逐页提取开始、30=提取完成
-// （原文排版完整定型）、100=翻译完成（见 backend/pipeline/processor.py）
-const EXTRACT_DONE = 30;
 
 export default function MainPage() {
   const { folderId } = useParams();
@@ -698,9 +700,12 @@ export default function MainPage() {
         cancelText="直接打开"
         onConfirm={() => {
           if (!attachPrompt) return;
+          // 提取未完成（排版未定型）时只接管不进入：主页进度卡的自动跳转
+          // 会在 ≥EXTRACT_DONE 时兜底入场（阶段11-T6 门禁同款阈值）
+          const ready = attachPrompt.progress >= EXTRACT_DONE;
           const r = attach(attachPrompt.jobId, attachPrompt.filePath);
           setAttachPrompt(null);
-          if (r.ok) {
+          if (r.ok && ready) {
             navigatedRef.current = true;
             navigate("/reader/bilingual");
           }

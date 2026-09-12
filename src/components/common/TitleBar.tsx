@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { usePdfStore } from "../../stores/pdfStore";
 import { useSessionsStore } from "../../stores/sessionsStore";
+import { EXTRACT_DONE } from "../../lib/translationManager";
 
 /**
  * 自绘标题栏（阶段10-T3；2026-09-10 验收反馈二次改造）：
@@ -65,6 +66,14 @@ export default function TitleBar() {
   const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
 
   const handleActivate = (key: string) => {
+    // 阶段11-T6 门禁：提取未完成（progress<EXTRACT_DONE，排版未定型）的
+    // 翻译中 tab 不进阅读页。不在阅读页时仅激活（留在当前页看进度卡）；
+    // 已在阅读页则整次忽略——激活会把提取中的半成品 pages 换进正看的文章
+    const s = sessions.find((x) => x.key === key);
+    if (s?.job?.status === "running" && (s.job?.progress ?? 0) < EXTRACT_DONE) {
+      if (!isReader) activate(key);
+      return;
+    }
     if (activate(key) && !isReader) navigate("/reader/bilingual");
   };
 

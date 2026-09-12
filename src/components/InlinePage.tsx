@@ -12,6 +12,7 @@ import ReaderToolbar from "./ReaderToolbar";
 import ReaderTabs from "./ReaderTabs";
 import OriginalReader from "./OriginalReader";
 import DualPdfPage from "./DualPdfPage";
+import { useBabelDocStore } from "../stores/babeldocStore";
 
 /** 纯图片块（markdown 图片引用），不与译文配对，整块原样展示 */
 const isPureImage = (t: string) => /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(t);
@@ -69,8 +70,13 @@ export default function InlinePage() {
   const zoom = useUiStore((s) => s.zoom) ?? 1;
   const zoomRef = useZoomWheel<HTMLDivElement>();
   const blocks = useMemo(() => pages.flatMap((p) => p.blocks), [pages]);
+  // F5 后会话清空，但 BabelDOC 任务已被静默重接管（阶段11-T5）：直接呈现
+  // 排版对照视图，否则卡在无会话门禁页（同 BilingualPage，2026-09-12）
+  const babeldocActive = useBabelDocStore(
+    (s) => s.phase === "running" || s.phase === "done",
+  );
 
-  if (blocks.length === 0) {
+  if (blocks.length === 0 && !babeldocActive) {
     return (
       <div className="py-20 text-center">
         <div
@@ -104,12 +110,13 @@ export default function InlinePage() {
         </div>
       )}
 
-      {/* 原版PDF 组（阶段7-T3 分组）：点击翻译=pdfjs 原样渲染 + 块坐标译文浮层；
-          左右对照=T4 左渲染右译文锚定对照；翻译进度见底部状态条 */}
-      {readerMode === "original_click" ? (
-        <OriginalReader />
-      ) : readerMode === "original_bilingual" ? (
+      {/* 原版PDF 组（阶段7-T3 分组）；无会话但 BabelDOC 重接管运行中
+          → 直接呈现对照视图（F5 恢复，同 BilingualPage） */}
+      {readerMode === "original_bilingual" ||
+      (blocks.length === 0 && babeldocActive) ? (
         <DualPdfPage />
+      ) : readerMode === "original_click" ? (
+        <OriginalReader />
       ) : (
       /* 整篇连续文档流：所有页的 block 按文档顺序排布 */
       <div className="min-h-0 flex-1 overflow-y-auto">

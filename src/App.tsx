@@ -105,6 +105,11 @@ function App() {
           useBabelDocStore
             .getState()
             .reattachRunning(ex.job_id, ex.file_path, Math.round(ex.progress));
+          // F5 时若停在阅读页，恢复到对照模式：会话已清空，重接管视图
+          // （进度/产物）在排版对照里呈现，工具栏状态与内容保持一致
+          if (window.location.pathname.startsWith("/reader")) {
+            useUiStore.getState().setReaderMode("original_bilingual");
+          }
         }
         // 翻译运行中：弹确认（接管会改变当前阅读视图，需用户点头）
         if (pipeline.length > 0 && !currentTranslationKey()) {

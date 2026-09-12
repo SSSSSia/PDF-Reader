@@ -22,10 +22,22 @@ import LoadingSpinner from "./common/LoadingSpinner";
  */
 export default function DualPdfPage() {
   const { filePath, isLoading, progress: mainProgress } = usePdfStore();
-  const { phase, progress, stage, dualPath, error, jobId, start, clearError } =
-    useBabelDocStore();
+  const {
+    phase,
+    progress,
+    stage,
+    dualPath,
+    error,
+    jobId,
+    filePath: babeldocFilePath,
+    start,
+    clearError,
+  } = useBabelDocStore();
   const navigate = useNavigate();
   const zoomRef = useZoomWheel<HTMLDivElement>();
+  // F5 重接管场景（阶段11-T5）：pdfStore 会话为空，任务路径在 babeldocStore
+  // ——回落，否则「请先打开一篇 PDF」门禁挡住进度/产物（2026-09-12 用户反馈）
+  const effectivePath = filePath || babeldocFilePath || "";
 
   const backToBilingual = () => {
     // 必须同步复位 readerMode，否则仍停留在原版形态（"暂不"点击无反应根因）
@@ -40,13 +52,13 @@ export default function DualPdfPage() {
   // 用户误以为"没保存"。
   const [probing, setProbing] = useState(false);
   useEffect(() => {
-    if (phase !== "idle" || !filePath || isLoading) return;
+    if (phase !== "idle" || !effectivePath || isLoading) return;
     let cancelled = false;
     setProbing(true);
     void (async () => {
       let hit = false;
       try {
-        hit = await useBabelDocStore.getState().probeCached(filePath);
+        hit = await useBabelDocStore.getState().probeCached(effectivePath);
       } catch {
         /* 探测失败按未缓存处理，确认卡兜底 */
       }
@@ -55,9 +67,9 @@ export default function DualPdfPage() {
     return () => {
       cancelled = true;
     };
-  }, [phase, filePath, isLoading]);
+  }, [phase, effectivePath, isLoading]);
 
-  if (!filePath) {
+  if (!effectivePath) {
     return (
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center py-20 text-center">
         <p className="mb-4 text-slate-600 dark:text-slate-300">
@@ -84,7 +96,7 @@ export default function DualPdfPage() {
               className="btn-secondary"
               onClick={() => {
                 clearError();
-                void start(filePath);
+                void start(effectivePath);
               }}
             >
               重试
@@ -188,7 +200,7 @@ export default function DualPdfPage() {
             消耗模型额度（无法复用现有翻译缓存）；同文档生成过一次后秒开。
           </p>
           <div className="flex justify-center">
-            <button className="btn-primary" onClick={() => void start(filePath)}>
+            <button className="btn-primary" onClick={() => void start(effectivePath)}>
               开始生成
             </button>
           </div>

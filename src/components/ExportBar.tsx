@@ -28,7 +28,7 @@ export default function ExportBar() {
         value={format}
         onChange={(e) => setFormat(e.target.value as ExportFormat)}
         aria-label="导出格式"
-        className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-700 transition-colors duration-150 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+        className="input-field w-auto"
       >
         <option value="markdown">Markdown</option>
         <option value="text">纯文本</option>

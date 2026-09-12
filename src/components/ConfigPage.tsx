@@ -43,7 +43,7 @@ const OCR_PRESETS: Preset[] = [
   { name: "自定义", url: "", model: "", provider: "openai" },
 ];
 
-/** API Key 输入：密码态 + 显隐切换（CadAgent 的 Show/Hide 逻辑） */
+/** API Key 输入：密码态 + 显隐切换（切换钮内嵌输入框右缘，一体成形） */
 function PasswordField({
   id,
   value,
@@ -55,11 +55,11 @@ function PasswordField({
 }) {
   const [show, setShow] = useState(false);
   return (
-    <div className="flex gap-2">
+    <div className="relative">
       <input
         id={id}
         type={show ? "text" : "password"}
-        className="input-field flex-1"
+        className="input-field pr-16"
         placeholder="sk-..."
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -67,7 +67,9 @@ function PasswordField({
       <button
         type="button"
         onClick={() => setShow((s) => !s)}
-        className="btn-secondary w-14 shrink-0"
+        aria-label={show ? "隐藏 API Key" : "显示 API Key"}
+        title={show ? "隐藏" : "显示"}
+        className="absolute inset-y-1 right-1 my-auto flex h-8 w-14 items-center justify-center rounded-md text-xs font-medium text-slate-500 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
       >
         {show ? "隐藏" : "显示"}
       </button>

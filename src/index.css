@@ -129,18 +129,18 @@
            dark:border-slate-700 dark:bg-slate-800 dark:shadow-none;
   }
 
-  /* 主按钮：唯一的蓝色实心底，留给最关键的操作 */
+  /* 主按钮：唯一的蓝色实心底，留给最关键的操作（与 .input-field 同高 h-10） */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2
+    @apply inline-flex h-10 items-center justify-center gap-1.5 rounded-lg px-4
            text-sm font-medium text-white transition-colors duration-150
            bg-blue-600 hover:bg-blue-700 active:bg-blue-800
            disabled:pointer-events-none disabled:opacity-50;
   }
 
-  /* 次级按钮：边框白底，用于常规操作 */
+  /* 次级按钮：边框白底，用于常规操作（与 .input-field 同高 h-10，同排对齐） */
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-1.5 rounded-lg
-           border border-slate-300 px-3.5 py-1.5 text-sm font-medium
+    @apply inline-flex h-10 items-center justify-center gap-1.5 rounded-lg
+           border border-slate-300 px-4 text-sm font-medium
            text-slate-700 transition-colors duration-150
            bg-white hover:bg-slate-50 active:bg-slate-100
            disabled:pointer-events-none disabled:opacity-50
@@ -148,14 +148,27 @@
            dark:hover:bg-slate-700 dark:active:bg-slate-600;
   }
 
-  /* 表单输入：全站统一 */
+  /* 表单输入：全站统一（固定 h-10——select/input 同高，行内对齐不漂移） */
   .input-field {
-    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2
+    @apply h-10 w-full rounded-lg border border-slate-300 bg-white px-3
            text-sm text-slate-800 transition-colors duration-150
            placeholder-slate-400 focus:border-blue-500 focus:outline-none
            focus:ring-2 focus:ring-blue-500/30
            dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100
            dark:placeholder-slate-500;
+  }
+
+  /* 下拉框：原生箭头贴右缘且外观不可控——收掉原生外观，自绘 chevron
+     （SVG data-uri 背景右对齐；暗色换浅色箭头），文字留位防截断 */
+  select.input-field {
+    @apply appearance-none pr-9;
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+  }
+
+  .dark select.input-field {
+    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   }
 
   .form-label {

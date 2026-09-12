@@ -23,6 +23,7 @@ from pipeline.processor import (
     run_pipeline,
     get_pipeline_status,
     running_job_count,
+    list_running_jobs,
     MAX_RUNNING_JOBS,
 )
 from config import settings
@@ -288,6 +289,12 @@ async def api_run_pipeline(file_path: dict):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/pipeline/running")
+async def api_pipeline_running():
+    """列出运行中的翻译任务（阶段11-T5：前端 F5 丢 job_id 后据此自动重接管）。"""
+    return list_running_jobs()
+
 
 @app.get("/api/pipeline/status/{job_id}")
 async def api_get_pipeline_status(job_id: str):

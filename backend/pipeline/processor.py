@@ -84,6 +84,20 @@ def running_job_count() -> int:
     return sum(1 for j in _jobs.values() if j.get("status") == "running")
 
 
+def list_running_jobs() -> list[dict]:
+    """运行中任务列表（阶段11-T5）：前端 F5 刷新丢失 job_id 后，
+    据此发现后端仍在跑的任务并自动重接管（attach）。"""
+    return [
+        {
+            "job_id": jid,
+            "file_path": j.get("file_path") or "",
+            "progress": j.get("progress", 0),
+        }
+        for jid, j in _jobs.items()
+        if j.get("status") == "running"
+    ]
+
+
 def _evict_jobs() -> None:
     now = time.time()
     # TTL：超期且已完成
@@ -146,6 +160,8 @@ async def run_pipeline(file_path: str) -> dict:
         "progress": 0,
         "pages": [],
         "error": None,
+        # 阶段11-T5：F5 后前端丢 job_id，凭 file_path 在 running 列表里发现并重接管
+        "file_path": file_path,
         "stats": {"ocr_cache_hit": 0, "ocr_total": 0, "tr_cache_hit": 0, "tr_total": 0},
     }
 

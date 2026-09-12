@@ -170,6 +170,61 @@ export async function startTranslation(
   return { ok: true, key };
 }
 
+/**
+ * 重接管仍在运行的翻译任务（阶段11-T5）：F5 整页重载后前端 job_id 丢失，
+ * 由 App 启动时的 running 列表发现后调用。复用 poll 循环；会话注册表在
+ * 刷新后已清空，此处重新注册（镜像语义与 startTranslation 一致）。
+ * 约束：不改 run_pipeline 幂等逻辑——后端 job 一直在跑，接管只是"续看"。
+ */
+export function attach(
+  jobId: string,
+  filePath: string,
+): { ok: true } | { ok: false; reason: string } {
+  if (runningKey) {
+    return { ok: false, reason: "已有翻译任务进行中，无法重复接管" };
+  }
+  const sessions = useSessionsStore.getState();
+  const pdf = usePdfStore.getState();
+
+  sessions.captureActive(); // F5 后无活跃会话，此为 no-op
+
+  pdf.setLoading(true);
+  pdf.setProgress(0);
+  pdf.setError(null);
+  pdf.setResult(null);
+  pdf.setPages([]); // 首次 poll 的 diff 会因结构变化整表灌入后端已有 pages
+  const fileName = (filePath.split(/[\\/]/).pop() ?? filePath).replace(
+    /\.pdf$/i,
+    "",
+  );
+  pdf.setFile({
+    name: `${fileName}.pdf`,
+    size: 0,
+    type: "application/pdf",
+    path: filePath,
+  } as any);
+  pdf.setFilePath(filePath);
+  pdf.setSessionKey(jobId);
+
+  runningKey = jobId;
+  sessions.register({
+    key: jobId,
+    title: fileName,
+    kind: "job",
+    snapshot: {
+      filePath,
+      fileName,
+      pages: [],
+      currentPage: 0,
+      result: null,
+      error: null,
+    },
+    job: { progress: 0, status: "running" },
+  });
+  void poll(jobId, filePath);
+  return { ok: true };
+}
+
 /** 后台轮询：写会话注册表；活跃会话同步镜像 pdfStore（渐进渲染体验不变） */
 async function poll(key: string, filePath: string): Promise<void> {
   const deadline = Date.now() + MAX_WAIT_MS;

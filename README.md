@@ -214,6 +214,7 @@ npm run dev
 | GET | `/api/file/raw` | 按路径返回 PDF 字节（缩略图/浏览器模式） |
 | GET | `/api/file/exists` | 文件存在性检查 |
 | POST | `/api/pipeline/run` | 启动提取+翻译流水线，返回 job_id |
+| GET | `/api/pipeline/running` | 列出运行中的翻译任务（F5 后自动重接管） |
 | GET | `/api/pipeline/status/{job_id}` | 轮询进度与渐进结果（前端 2.5s 轮询） |
 | POST | `/api/ocr/process` | 单独 OCR（不上翻） |
 | POST | `/api/translate/batch` | 批量文本翻译 |

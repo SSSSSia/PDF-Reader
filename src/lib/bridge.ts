@@ -271,6 +271,16 @@ export async function getPipelineStatus(jobId: string): Promise<string> {
   return JSON.stringify(r);
 }
 
+/** 列出后端仍在运行的翻译任务（阶段11-T5：F5 后前端丢 job_id，据此发现并重接管）。
+ *  与 babeldoc 三函数同理：两模式均直连本地 FastAPI（Rust 端本就转发至此）。 */
+export async function listRunningTranslations(): Promise<
+  Array<{ job_id: string; file_path: string; progress: number }>
+> {
+  return apiFetch(`${API_BASE}/api/pipeline/running`) as Promise<
+    Array<{ job_id: string; file_path: string; progress: number }>
+  >;
+}
+
 /** 读取配置（JSON 字符串），与 Rust load_config 一致 */
 export async function loadConfig(): Promise<string> {
   if (isTauri()) {

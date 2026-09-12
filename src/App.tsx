@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import MainPage from "./components/MainPage";
 import AddArticlePage from "./components/AddArticlePage";
@@ -10,7 +10,9 @@ import { useUiStore } from "./stores/uiStore";
 import Layout from "./components/common/Layout";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import LoadingSpinner from "./components/common/LoadingSpinner";
-import { logFrontend } from "./lib/bridge";
+import ConfirmDialog from "./components/common/ConfirmDialog";
+import { logFrontend, listRunningTranslations } from "./lib/bridge";
+import { attach, currentTranslationKey } from "./lib/translationManager";
 
 function App() {
   const { isConfigured, configLoaded, config, loadConfig } = useConfigStore();
@@ -61,6 +63,46 @@ function App() {
     <Navigate to="/config" replace />
   );
 
+  // 阶段11-T5 翻译任务自动重接管：F5 整页重载后前端 job_id 丢失，后端任务
+  // 孤儿化继续跑。配置加载完成后查一次 running 列表，发现未完成任务弹自绘
+  // 确认，确认后 attach 恢复进度与流式渲染；忽略/无任务均不打扰。
+  const [reattach, setReattach] = useState<{
+    jobId: string;
+    filePath: string;
+    fileName: string;
+    progress: number;
+  } | null>(null);
+  const reattachChecked = useRef(false);
+  useEffect(() => {
+    if (!configLoaded || reattachChecked.current) return;
+    reattachChecked.current = true;
+    const discover = async (attempt: number): Promise<void> => {
+      if (currentTranslationKey()) return;
+      try {
+        const list = await listRunningTranslations();
+        if (list.length > 0 && !currentTranslationKey()) {
+          const j = list[0];
+          const fileName = (j.file_path.split(/[\\/]/).pop() ?? "文档").replace(
+            /\.pdf$/i,
+            "",
+          );
+          setReattach({
+            jobId: j.job_id,
+            filePath: j.file_path,
+            fileName,
+            progress: Math.round(j.progress),
+          });
+        }
+      } catch {
+        // 后端未就绪（浏览器模式手动启动等）：最多再等两轮
+        if (attempt < 2) {
+          setTimeout(() => void discover(attempt + 1), 5000);
+        }
+      }
+    };
+    void discover(0);
+  }, [configLoaded]);
+
   return (
     <ErrorBoundary>
       <Layout>
@@ -80,6 +122,24 @@ function App() {
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Layout>
+      <ConfirmDialog
+        open={reattach !== null}
+        title="检测到未完成的翻译"
+        description={
+          reattach
+            ? `「${reattach.fileName}」仍在后台翻译中（当前 ${reattach.progress}%）。继续后将恢复进度与实时译文，已翻译内容不会重复计费。`
+            : ""
+        }
+        confirmText="继续翻译"
+        cancelText="忽略"
+        onConfirm={() => {
+          if (!reattach) return;
+          const r = attach(reattach.jobId, reattach.filePath);
+          if (r.ok) setReattach(null);
+          // 接管失败（理论上仅并发接管冲突）保留弹窗可再次确认
+        }}
+        onCancel={() => setReattach(null)}
+      />
     </ErrorBoundary>
   );
 }

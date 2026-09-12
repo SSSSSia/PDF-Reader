@@ -228,6 +228,10 @@ npm run dev
 | POST | `/api/export/babeldoc` | 启动排版对照导出（BabelDOC，幂等缓存） |
 | GET | `/api/export/babeldoc/cached` | 探测文档是否已有排版对照产物 |
 | GET | `/api/export/babeldoc/running` | 列出运行中的排版对照导出任务 |
+| GET | `/api/export/babeldoc/runtime` | 运行时状态（是否已装/安装进度，阶段9-T6） |
+| POST | `/api/export/babeldoc/runtime/install` | 一键在线安装运行时（多源国内优先） |
+| POST | `/api/export/babeldoc/runtime/install-local` | 从本地 zip 导入安装运行时 |
+| POST | `/api/export/babeldoc/runtime/cancel` | 取消安装（下载阶段即时生效） |
 | GET | `/api/export/babeldoc/{job_id}` | 导出任务进度/状态 |
 | DELETE | `/api/export/babeldoc/{job_id}` | 取消导出任务 |
 
@@ -249,6 +253,31 @@ powershell -ExecutionPolicy Bypass -File scripts/build-exe.ps1
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1
 ```
+
+### BabelDOC 运行时包（可选组件，阶段9-T6）
+
+主安装包**不含** BabelDOC（venv 662MB，直接打包会令安装包从 ~72MB 涨到
+400MB+）。用户首次使用「左右对照」时应用内引导安装运行时（约 300MB，装到
+`%APPDATA%/pdf-reader/babeldoc-runtime/`，之后离线可用）。
+
+发布前构建并上传运行时包（**一次性**，babeldoc 升版时重做）：
+
+```powershell
+# 下载 embeddable python + 打包 .venv-babeldoc → dist/babeldoc-runtime-win64.zip
+# （需网络下载 embeddable python ~11MB；可用 -Proxy 指定代理）
+powershell -ExecutionPolicy Bypass -File scripts/build-babeldoc-runtime.ps1
+```
+
+上传清单（按国内可达性排序；上传后核对 `backend/export/babeldoc_runtime.py`
+的 `DEFAULT_URLS` 与真实 URL 一致，也可用环境变量
+`PDF_READER_BABELDOC_RUNTIME_URLS` 覆盖）：
+
+1. **ModelScope 魔搭**（国内直连，主源）；
+2. **hf-mirror / HuggingFace**（Datasets 仓库，国内经 hf-mirror 可达）；
+3. **GitHub Release**（tag `babeldoc-runtime-v1`，海外兜底）。
+
+无法访问任何源的用户：安装卡提供「从本地文件安装」——任意渠道取得 zip 后
+选择文件即可（自动校验包结构 + zip-slip 防护）。
 
 ### 排错：Rust 链接失败
 

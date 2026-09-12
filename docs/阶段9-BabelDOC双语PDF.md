@@ -72,8 +72,15 @@
     exe 同级随包运行时（PyInstaller sys.executable 恒指 exe 本体）→
     `<data_dir>/babeldoc-runtime/`（保留扩展位）；`babeldoc_runtime.py`
     精简为纯定位模块（无网络行为）；下载链路的 4 端点与前端安装卡同步移除
-  - 待办：发布期实跑（需网络下载 embeddable python ~11MB）+ 干净环境
-    人工验收（无项目 venv 时对照功能开箱即用）
+  - **发布期实跑完成（2026-09-12）**：embeddable python 经代理下载 + 暂存 +
+    冒烟自检（smoke ok 0.6.4）✓；干净环境验收（隐藏项目 venv）检测链
+    venv→None→exe 同级随包位精确命中 ✓；完整构建产出双安装包
+    （MSI 314MB / NSIS 231MB，WiX manifest 确认 babeldoc-runtime 组件入包）✓
+  - 实跑修出两个坑：① tauri 2 CLI 无 `--resources` 参数——`tauri.conf.json`
+    的 resources 恒为 `[]`（静态声明在目录缺失时炸 build script，用户实测
+    踩中），build-exe.ps1 经 `-c` 配置合并动态注入；② 暂存目录不能放
+    `dist/`——vite build 的 emptyOutDir 会把它抹掉，改 `build/babeldoc-runtime/`
+  - 剩余：真机安装人工验收（沙箱无法静默装）——装后对照功能应开箱即用
 
 ## 4. 验收标准（全部满足才算完成）
 

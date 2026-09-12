@@ -24,16 +24,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 $steps = 3
-$runtimeArg = @()
+$configArg = @()
 if (-not $SkipRuntime) {
-    Write-Host "==> [1/$steps] 暂存 BabelDOC 运行时（tauri --resources 注入用）..." -ForegroundColor Cyan
+    Write-Host "==> [1/$steps] 暂存 BabelDOC 运行时（tauri config 注入用）..." -ForegroundColor Cyan
     powershell -ExecutionPolicy Bypass -File scripts/build-babeldoc-runtime.ps1 -SkipZip
-    $runtimeDir = Join-Path (Get-Location) "dist/babeldoc-runtime"
+    # 暂存目录在 build/（vite frontendDist 之外，见 build-babeldoc-runtime.ps1 说明）
+    $runtimeDir = Join-Path (Get-Location) "build/babeldoc-runtime"
     if (-not (Test-Path (Join-Path $runtimeDir "python.exe"))) {
         throw "运行时暂存后仍缺 python.exe：$runtimeDir"
     }
-    # tauri --resources 格式：源路径=目标路径（相对 bundle 资源根）
-    $runtimeArg = @("--resources", "$runtimeDir=babeldoc-runtime")
+    # tauri 2 CLI 无 --resources 参数：经 -c 配置合并注入（相对 src-tauri 解析）
+    $configArg = @("-c", '{\"bundle\":{\"resources\":{\"../build/babeldoc-runtime/\":\"babeldoc-runtime/\"}}}')
 }
 else {
     Write-Host "==> [1/$steps] 跳过运行时暂存（-SkipRuntime，产物将不含 BabelDOC！）" -ForegroundColor Yellow
@@ -45,6 +46,7 @@ if (-not $SkipBackend) {
 }
 
 Write-Host "==> [3/$steps] 构建桌面应用 (tauri build) ..." -ForegroundColor Cyan
-npm run tauri build -- @runtimeArg
+# npm 需 Odd 转义链把 -c JSON 透传给 tauri CLI（直接引号会被 npm 剥掉）
+npm run tauri build -- $configArg
 
 Write-Host "完成。产物位于 src-tauri/target/release/bundle/。" -ForegroundColor Green

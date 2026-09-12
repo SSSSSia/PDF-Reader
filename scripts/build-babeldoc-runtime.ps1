@@ -22,7 +22,9 @@ $venv = Join-Path $root ".venv-babeldoc"
 if (-not (Test-Path (Join-Path $venv "Lib\site-packages"))) {
   throw "未找到 $venv —— 请先按 docs/阶段9-BabelDOC双语PDF.md 创建 BabelDOC venv"
 }
-$dist = Join-Path $root "dist"
+# 暂存目录必须在 vite frontendDist（dist/）之外——vite build 的 emptyOutDir
+# 会清空 dist/，暂存放那里会在 tauri build 过程中被抹掉（2026-09-12 实测）
+$dist = Join-Path $root "build"
 $stage = Join-Path $dist "babeldoc-runtime"
 New-Item -ItemType Directory -Path $dist -Force | Out-Null
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }

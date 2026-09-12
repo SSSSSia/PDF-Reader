@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 
 interface Props {
   open: boolean;
@@ -16,6 +17,10 @@ interface Props {
  * 应用内二次确认对话框（2026-09-09）。
  * 不用 window.confirm：Tauri WebView2 对原生 confirm/alert 支持不可靠
  * （可能静默返回 false），必须自绘模态框。
+ * 2026-09-12 反馈①：改经 portal 挂到 body——部分调用点（如 Sidebar）位于
+ * position:sticky 容器内，sticky 会创建独立 stacking context，fixed z-50
+ * 蒙版被困其中，正文里自带堆叠上下文的元素反而画在蒙版之上（表现为"部分
+ * 元素高亮"且可点击穿透）；portal 到 body 后层级归位根上下文，全局生效。
  */
 export default function ConfirmDialog({
   open,
@@ -39,7 +44,7 @@ export default function ConfirmDialog({
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
       onClick={onCancel}
@@ -76,6 +81,7 @@ export default function ConfirmDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

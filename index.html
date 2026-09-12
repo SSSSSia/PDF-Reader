@@ -6,7 +6,38 @@
     <title>PDF双语阅读器</title>
   </head>
   <body>
+    <!-- 启动过渡（2026-09-12 用户反馈②）：窗口 visible:false，本块在 webview
+         加载瞬间即可绘制，替代此前 ~3s 白屏；React 挂载后由 App 移除并 show()
+         窗口。样式全部内联，不依赖 CSS/JS 加载顺序。 -->
+    <div
+      id="splash"
+      style="position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; background: #2563eb; user-select: none;"
+    >
+      <div
+        style="display: flex; height: 76px; width: 76px; align-items: center; justify-content: center; border-radius: 18px; background: rgba(255, 255, 255, 0.15); font-size: 42px; font-weight: 700; color: #fff; font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;"
+      >
+        译
+      </div>
+      <div
+        style="font-size: 15px; font-weight: 500; color: rgba(255, 255, 255, 0.92); font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;"
+      >
+        PDF双语阅读器
+      </div>
+      <div
+        style="font-size: 12px; color: rgba(255, 255, 255, 0.55); font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;"
+      >
+        正在启动…
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // 兜底：React 挂载失败（bundle 损坏等极端情况）时 10s 后强制显示窗口，
+      // 避免应用因 visible:false 永久不可见
+      setTimeout(function () {
+        var t = window.__TAURI_INTERNALS__;
+        if (t && t.invoke) t.invoke("plugin:window|show", { label: "main" });
+      }, 10000);
+    </script>
   </body>
 </html>

@@ -19,6 +19,20 @@ function App() {
   const { isConfigured, configLoaded, config, loadConfig } = useConfigStore();
   const { theme, setTheme } = useUiStore();
 
+  // 启动过渡收尾（2026-09-12 反馈②）：React 已挂载——移除 index.html 静态
+  // splash 并显示窗口（tauri.conf visible:false 起始隐藏，替代 ~3s 白屏）。
+  // 放在最前的 effect 以尽早 show()；浏览器 dev 无窗口可显，仅移除 splash。
+  useEffect(() => {
+    document.getElementById("splash")?.remove();
+    if ("__TAURI_INTERNALS__" in window) {
+      import("@tauri-apps/api/window")
+        .then(({ getCurrentWindow }) => getCurrentWindow().show())
+        .catch(() => {
+          /* show 失败不阻断启动（index.html 10s 兜底会再试） */
+        });
+    }
+  }, []);
+
   // 全局错误上报：渲染外未捕获的异常/Promise 拒绝落到后端 frontend.log，
   // 打包 exe 无控制台时这是排查"页面崩溃"的主要线索（2026-09-09 用户反馈崩溃）
   useEffect(() => {

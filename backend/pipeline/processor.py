@@ -167,6 +167,26 @@ async def run_pipeline(file_path: str) -> dict:
 
     asyncio.create_task(_process_pipeline(file_path, job_id, pdf_hash))
 
+    # 阶段11-T5 扩展（用户方案）：上传即入库——此前翻译完成才登记，
+    # 进行中的文档在文献库"消失"（F5/关开应用后无从发现）。早期登记的
+    # doc_id 与完成时一致（pdf_hash[:16]），完成 upsert 按 doc_id 原地补全。
+    try:
+        import docs_index
+
+        docs_index.upsert_doc(
+            settings.data_dir,
+            {
+                "doc_id": pdf_hash[:16],
+                "title": os.path.splitext(os.path.basename(file_path))[0],
+                "file_path": os.path.abspath(file_path),
+                "pdf_hash": pdf_hash,
+                "file_mtime": int(os.path.getmtime(file_path)),
+                "status": "translating",
+            },
+        )
+    except Exception as e:
+        print(f"[docs_index] 早期登记失败（不阻断主链路）: {e}")
+
     return {"job_id": job_id, "status": "running", "progress": 0, "reused": False}
 
 

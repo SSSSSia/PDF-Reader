@@ -11,8 +11,9 @@ import Layout from "./components/common/Layout";
 import ErrorBoundary from "./components/common/ErrorBoundary";
 import LoadingSpinner from "./components/common/LoadingSpinner";
 import ConfirmDialog from "./components/common/ConfirmDialog";
-import { logFrontend, listRunningTranslations } from "./lib/bridge";
+import { logFrontend, listRunningTranslations, listRunningExports } from "./lib/bridge";
 import { attach, currentTranslationKey } from "./lib/translationManager";
+import { useBabelDocStore } from "./stores/babeldocStore";
 
 function App() {
   const { isConfigured, configLoaded, config, loadConfig } = useConfigStore();
@@ -79,9 +80,21 @@ function App() {
     const discover = async (attempt: number): Promise<void> => {
       if (currentTranslationKey()) return;
       try {
-        const list = await listRunningTranslations();
-        if (list.length > 0 && !currentTranslationKey()) {
-          const j = list[0];
+        const [pipeline, exports] = await Promise.all([
+          listRunningTranslations(),
+          listRunningExports(),
+        ]);
+        // BabelDOC 运行中：静默重接管（无需用户决策，进度卡在其模式内呈现；
+        // 用户点忽略也不丢——任务照跑，产物完成自动落缓存）
+        const ex = exports[0];
+        if (ex) {
+          useBabelDocStore
+            .getState()
+            .reattachRunning(ex.job_id, ex.file_path, Math.round(ex.progress));
+        }
+        // 翻译运行中：弹确认（接管会改变当前阅读视图，需用户点头）
+        if (pipeline.length > 0 && !currentTranslationKey()) {
+          const j = pipeline[0];
           const fileName = (j.file_path.split(/[\\/]/).pop() ?? "文档").replace(
             /\.pdf$/i,
             "",

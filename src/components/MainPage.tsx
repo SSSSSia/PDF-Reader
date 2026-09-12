@@ -5,8 +5,15 @@ import { useUiStore } from "../stores/uiStore";
 import { useLibraryStore } from "../stores/libraryStore";
 import { useSessionsStore } from "../stores/sessionsStore";
 import { useConfigStore } from "../stores/configStore";
-import { startTranslation, currentTranslationKey } from "../lib/translationManager";
-import { openFileDialog, uploadFile, isTauri, openDoc } from "../lib/bridge";
+import { startTranslation, attach, currentTranslationKey } from "../lib/translationManager";
+import ConfirmDialog from "./common/ConfirmDialog";
+import {
+  openFileDialog,
+  uploadFile,
+  isTauri,
+  openDoc,
+  listRunningTranslations,
+} from "../lib/bridge";
 import { useDocThumbnails } from "../hooks/useDocThumbnails";
 import type { DocMeta } from "../types";
 import LoadingSpinner from "./common/LoadingSpinner";
@@ -37,6 +44,14 @@ export default function MainPage() {
   // 用 ref 保证同一文件只跳一次；处理新文件时重置。
   const navigatedRef = useRef(false);
   const [openingId, setOpeningId] = useState<string | null>(null);
+  // 阶段11-T5 扩展：打开文献时发现后端仍在翻译 → 提示接管
+  const [attachPrompt, setAttachPrompt] = useState<{
+    jobId: string;
+    filePath: string;
+    title: string;
+    progress: number;
+    doc: DocMeta;
+  } | null>(null);
   const [query, setQuery] = useState("");
   // 「移动到文件夹」菜单当前展开的文档（null = 关闭）
   const [menuDoc, setMenuDoc] = useState<DocMeta | null>(null);
@@ -160,7 +175,10 @@ export default function MainPage() {
 
   /** 打开已翻译文章（阶段8 多会话）：已有页签直接激活；否则停靠当前会话
    *  → 缓存重建秒开 → 注册新会话。翻译进行中不再互斥（轮询已后台化）。 */
-  const handleOpenDoc = async (doc: DocMeta) => {
+  const handleOpenDoc = async (
+    doc: DocMeta,
+    opts?: { skipAttachCheck?: boolean },
+  ) => {
     if (openingId) return;
     const sessions = useSessionsStore.getState();
     // 已是该活跃会话（或内存中装的就是这一篇但未登记）→ 直接回阅读页
@@ -179,6 +197,28 @@ export default function MainPage() {
     setOpeningId(doc.doc_id);
     setMenuDoc(null);
     setError(null);
+    // 阶段11-T5 扩展：该文档的翻译仍在后端运行（上传后 F5/关开应用场景）
+    // → 提示接管继续，而非按"已完成"打开（此刻缓存只有部分页）
+    if (!opts?.skipAttachCheck) {
+      const running = await listRunningTranslations().catch(() => []);
+      const hit = running.find(
+        (r) =>
+          r.file_path.toLowerCase() === doc.file_path.toLowerCase() ||
+          r.file_path.split(/[\\/]/).pop()?.toLowerCase() ===
+            doc.file_path.split(/[\\/]/).pop()?.toLowerCase(),
+      );
+      if (hit) {
+        setOpeningId(null);
+        setAttachPrompt({
+          jobId: hit.job_id,
+          filePath: doc.file_path,
+          title: doc.title,
+          progress: Math.round(hit.progress),
+          doc,
+        });
+        return;
+      }
+    }
     try {
       const r = await openDoc(doc.doc_id);
       // 停靠当前活跃会话（可能是另一篇文献，也可能是翻译中的任务）
@@ -644,6 +684,33 @@ export default function MainPage() {
           )}
         </div>
       )}
+
+      {/* 阶段11-T5 扩展：打开文献时发现翻译仍在跑 → 提示接管 */}
+      <ConfirmDialog
+        open={attachPrompt !== null}
+        title="检测到未完成的翻译"
+        description={
+          attachPrompt
+            ? `「${attachPrompt.title}」仍在后台翻译中（当前 ${attachPrompt.progress}%）。继续后将恢复进度与实时译文；选择「直接打开」可先查看已翻译部分，不打断后台任务。`
+            : ""
+        }
+        confirmText="继续翻译"
+        cancelText="直接打开"
+        onConfirm={() => {
+          if (!attachPrompt) return;
+          const r = attach(attachPrompt.jobId, attachPrompt.filePath);
+          setAttachPrompt(null);
+          if (r.ok) {
+            navigatedRef.current = true;
+            navigate("/reader/bilingual");
+          }
+        }}
+        onCancel={() => {
+          const p = attachPrompt;
+          setAttachPrompt(null);
+          if (p) void handleOpenDoc(p.doc, { skipAttachCheck: true });
+        }}
+      />
     </div>
   );
 }

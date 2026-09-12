@@ -30,6 +30,9 @@ interface BabelDocState {
   /** 当前文件路径（判断点击时是否换了一篇文档） */
   filePath: string | null;
   start: (filePath: string) => Promise<void>;
+  /** 重接管仍在运行的导出任务（阶段11-T5 扩展）：不经 POST，
+   *  直接恢复 running 态与轮询（App 启动发现 running 列表后调用） */
+  reattachRunning: (jobId: string, filePath: string, progress: number) => void;
   /** 缓存探测（阶段9 验收反馈）：命中直接进入 done 态免确认打开，
    *  未命中由调用方弹确认卡。仅 idle 态调用。 */
   probeCached: (filePath: string) => Promise<boolean>;
@@ -112,6 +115,23 @@ export const useBabelDocStore = create<BabelDocState>((set, get) => ({
     } catch (e) {
       set({ phase: "error", error: String(e), stage: "" });
     }
+  },
+
+  reattachRunning: (jobId, filePath, progress) => {
+    stopPolling();
+    set({
+      phase: "running",
+      progress,
+      stage: "重接管",
+      cached: false,
+      dualPath: "",
+      error: "",
+      filePath,
+      jobId,
+    });
+    pollTimer = setInterval(() => {
+      void get()._poll();
+    }, POLL_INTERVAL_MS);
   },
 
   clearError: () => set({ phase: "idle", error: "", progress: 0, stage: "" }),

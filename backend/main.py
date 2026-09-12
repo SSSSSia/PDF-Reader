@@ -532,6 +532,14 @@ async def api_export_babeldoc_cached(file_path: str):
     )
 
 
+@app.get("/api/export/babeldoc/running")
+async def api_export_babeldoc_running():
+    """列出运行中的排版对照导出任务（阶段11-T5 扩展：App 启动后静默重接管）。"""
+    from export import babeldoc_export
+
+    return babeldoc_export.list_running_exports()
+
+
 @app.get("/api/export/babeldoc/{job_id}")
 async def api_export_babeldoc_status(job_id: str):
     """导出任务进度查询。任务表在内存中，后端重启后未完成任务丢失（产物仍在缓存）。"""

@@ -230,6 +230,15 @@ export async function cancelBabeldoc(jobId: string): Promise<void> {
   });
 }
 
+/** 列出运行中的排版对照导出任务（阶段11-T5 扩展：App 启动后静默重接管） */
+export async function listRunningExports(): Promise<
+  Array<{ job_id: string; file_path: string; progress: number }>
+> {
+  return apiFetch(`${API_BASE}/api/export/babeldoc/running`) as Promise<
+    Array<{ job_id: string; file_path: string; progress: number }>
+  >;
+}
+
 /**
  * 用系统默认程序打开本地 PDF。
  * Tauri 走 plugin-shell open（本地绝对路径）；浏览器经后端原始文件接口。

@@ -40,6 +40,19 @@ _STATUS = ("pending", "running", "done", "error", "cancelled")
 _MAX_WORKERS = 2
 
 
+def list_running_exports() -> list[dict]:
+    """运行中导出任务列表（阶段11-T5 扩展）：App 启动时据此静默重接管。"""
+    return [
+        {
+            "job_id": jid,
+            "file_path": j.get("file_path") or "",
+            "progress": j.get("progress", 0),
+        }
+        for jid, j in _jobs.items()
+        if j["status"] in ("pending", "running")
+    ]
+
+
 def _project_root() -> str:
     # __file__ = <root>/backend/export/babeldoc_export.py → 上溯三层到项目根
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

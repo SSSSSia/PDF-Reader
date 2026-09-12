@@ -1,8 +1,13 @@
 ﻿# 一键构建自包含 exe：
 #   1) 阶段9-T6：暂存 BabelDOC 运行时（embeddable python + site-packages）到
-#      dist/babeldoc-runtime/，作为 tauri resources 随安装包捆绑（开箱即用）
+#      dist/babeldoc-runtime/，经 tauri --resources 注入随安装包捆绑（开箱即用）
 #   2) 先用 PyInstaller 把 Python 后端打包为 Tauri sidecar（src-tauri/sidecar/）
 #   3) 再 tauri build 把 sidecar + 运行时一并打进桌面应用
+#
+# 运行时注入说明：tauri.conf.json 的 resources 恒为 []（保证无运行时目录时
+# 直接 `tauri build`/`tauri dev` 也能过——2026-09-12 实测静态声明会在目录
+# 缺失时炸 build script）；本脚本在暂存成功后经 `--resources` CLI 参数动态
+# 注入，正式包始终携带运行时。
 #
 # 用法（在仓库根目录执行）：
 #   powershell -ExecutionPolicy Bypass -File scripts/build-exe.ps1
@@ -19,12 +24,19 @@ param(
 $ErrorActionPreference = "Stop"
 
 $steps = 3
+$runtimeArg = @()
 if (-not $SkipRuntime) {
-    Write-Host "==> [1/$steps] 暂存 BabelDOC 运行时（tauri resources 捆绑用）..." -ForegroundColor Cyan
+    Write-Host "==> [1/$steps] 暂存 BabelDOC 运行时（tauri --resources 注入用）..." -ForegroundColor Cyan
     powershell -ExecutionPolicy Bypass -File scripts/build-babeldoc-runtime.ps1 -SkipZip
+    $runtimeDir = Join-Path (Get-Location) "dist/babeldoc-runtime"
+    if (-not (Test-Path (Join-Path $runtimeDir "python.exe"))) {
+        throw "运行时暂存后仍缺 python.exe：$runtimeDir"
+    }
+    # tauri --resources 格式：源路径=目标路径（相对 bundle 资源根）
+    $runtimeArg = @("--resources", "$runtimeDir=babeldoc-runtime")
 }
 else {
-    Write-Host "==> [1/$steps] 跳过运行时暂存（-SkipRuntime）" -ForegroundColor Yellow
+    Write-Host "==> [1/$steps] 跳过运行时暂存（-SkipRuntime，产物将不含 BabelDOC！）" -ForegroundColor Yellow
 }
 
 if (-not $SkipBackend) {
@@ -33,6 +45,6 @@ if (-not $SkipBackend) {
 }
 
 Write-Host "==> [3/$steps] 构建桌面应用 (tauri build) ..." -ForegroundColor Cyan
-npm run tauri build
+npm run tauri build -- @runtimeArg
 
 Write-Host "完成。产物位于 src-tauri/target/release/bundle/。" -ForegroundColor Green
